@@ -3,7 +3,12 @@ use rand::Rng;
 use stwo::{
     core::{
         ColumnVec,
-        fields::{m31::M31, qm31::QM31},
+        channel::Channel,
+        fields::{
+            m31::M31,
+            qm31::{QM31, SecureField},
+        },
+        pcs::TreeVec,
         poly::circle::CanonicCoset,
     },
     prover::{
@@ -17,18 +22,77 @@ use stwo_constraint_framework::{
 
 use crate::zq::Q;
 
-pub struct Eval {
+pub struct Claim {
     pub log_size: u32,
+}
+
+impl Claim {
+    pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
+        let trace_log_sizes = vec![self.log_size];
+        TreeVec::new(vec![vec![], trace_log_sizes, vec![]])
+    }
+    pub fn mix_into(&self, channel: &mut impl Channel) {
+        channel.mix_u64(self.log_size as u64);
+    }
+    pub fn gen_trace(
+        &self,
+    ) -> (
+        ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+        Vec<M31>,
+    ) {
+        let mut rng = rand::thread_rng();
+        let a = (0..(1 << self.log_size))
+            .map(|_| rng.gen_range(0..Q))
+            .collect::<Vec<_>>();
+        let b = (0..(1 << self.log_size))
+            .map(|_| rng.gen_range(0..Q))
+            .collect::<Vec<_>>();
+        let quotient = a
+            .iter()
+            .zip(b.iter())
+            .map(|(a, b)| M31::from_u32_unchecked((a + b) / Q))
+            .collect::<Vec<_>>();
+        let remainder = a
+            .iter()
+            .zip(b.iter())
+            .map(|(a, b)| M31::from_u32_unchecked((a + b) % Q))
+            .collect::<Vec<_>>();
+        let a = a
+            .iter()
+            .map(|a| M31::from_u32_unchecked(*a))
+            .collect::<Vec<_>>();
+        let b = b
+            .iter()
+            .map(|b| M31::from_u32_unchecked(*b))
+            .collect::<Vec<_>>();
+        let domain = CanonicCoset::new(self.log_size).circle_domain();
+        (
+            [a, b, quotient, remainder.clone()]
+                .into_iter()
+                .map(|col| {
+                    CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
+                        domain,
+                        BaseColumn::from_iter(col),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            remainder,
+        )
+    }
+}
+
+pub struct Eval {
+    pub claim: Claim,
     pub lookup_elements: super::range_check::LookupElements,
 }
 
 impl FrameworkEval for Eval {
     fn log_size(&self) -> u32 {
-        self.log_size
+        self.claim.log_size
     }
 
     fn max_constraint_log_degree_bound(&self) -> u32 {
-        self.log_size + 1
+        self.claim.log_size + 1
     }
 
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
@@ -50,69 +114,41 @@ impl FrameworkEval for Eval {
     }
 }
 
-pub fn gen_interaction_trace(
-    trace: &ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
-    lookup_elements: &super::range_check::LookupElements,
-) -> (
-    ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
-    QM31,
-) {
-    let log_size = trace[0].domain.log_size();
-    let mut logup_gen = LogupTraceGenerator::new(log_size);
-    let mut col_gen = logup_gen.new_col();
-
-    for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-        // Get the result value from the trace (column 2)
-        let result_packed = trace[2].data[vec_row];
-
-        // Create the denominator using the lookup elements
-        let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
-
-        // The numerator is 1 (we want to check that result is in the range)
-        let numerator = PackedQM31::one();
-
-        col_gen.write_frac(vec_row, numerator, denom);
-    }
-    col_gen.finalize_col();
-
-    logup_gen.finalize_last()
+pub struct InteractionClaim {
+    pub claimed_sum: SecureField,
 }
+impl InteractionClaim {
+    pub fn mix_into(&self, channel: &mut impl Channel) {
+        channel.mix_felts(&[self.claimed_sum]);
+    }
 
-pub fn gen_trace(log_size: u32) -> ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>> {
-    let mut rng = rand::thread_rng();
-    let a = (0..(1 << log_size))
-        .map(|_| rng.gen_range(0..Q))
-        .collect::<Vec<_>>();
-    let b = (0..(1 << log_size))
-        .map(|_| rng.gen_range(0..Q))
-        .collect::<Vec<_>>();
-    let quotient = a
-        .iter()
-        .zip(b.iter())
-        .map(|(a, b)| M31::from_u32_unchecked((a + b) / Q))
-        .collect::<Vec<_>>();
-    let remainder = a
-        .iter()
-        .zip(b.iter())
-        .map(|(a, b)| M31::from_u32_unchecked((a + b) % Q))
-        .collect::<Vec<_>>();
-    let a = a
-        .iter()
-        .map(|a| M31::from_u32_unchecked(*a))
-        .collect::<Vec<_>>();
-    let b = b
-        .iter()
-        .map(|b| M31::from_u32_unchecked(*b))
-        .collect::<Vec<_>>();
-    let domain = CanonicCoset::new(log_size).circle_domain();
-    [a, b, quotient, remainder]
-        .into_iter()
-        .map(|col| {
-            CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
-                domain,
-                BaseColumn::from_iter(col),
-            )
-        })
-        .collect::<Vec<_>>()
+    pub fn gen_interaction_trace(
+        trace: &ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+        lookup_elements: &super::range_check::LookupElements,
+    ) -> (
+        ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+        InteractionClaim,
+    ) {
+        let log_size = trace[0].domain.log_size();
+        let mut logup_gen = LogupTraceGenerator::new(log_size);
+        let mut col_gen = logup_gen.new_col();
+
+        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+            // Get the result value from the trace (column 2)
+            let result_packed = trace[2].data[vec_row];
+
+            // Create the denominator using the lookup elements
+            let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
+
+            // The numerator is 1 (we want to check that result is in the range)
+            let numerator = PackedQM31::one();
+
+            col_gen.write_frac(vec_row, numerator, denom);
+        }
+        col_gen.finalize_col();
+
+        let (interaction_trace, claimed_sum) = logup_gen.finalize_last();
+        (interaction_trace, InteractionClaim { claimed_sum })
+    }
 }
 pub type Component = FrameworkComponent<Eval>;
