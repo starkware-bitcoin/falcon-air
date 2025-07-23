@@ -113,12 +113,13 @@ impl InteractionClaim {
     }
 
     pub fn gen_interaction_trace(
-        trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        trace: &ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         lookup_elements: &LookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Self,
     ) {
+        let trace = &trace[0];
         let log_size = trace.domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
         let mut col_gen = logup_gen.new_col();
