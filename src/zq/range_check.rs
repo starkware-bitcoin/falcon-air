@@ -1,3 +1,16 @@
+//! # Range Check Component
+//!
+//! This module implements STARK proof components for range checking operations.
+//!
+//! The range check ensures that values are within the valid range [0, q) where q = 12289.
+//! This is implemented using a lookup table approach where:
+//! - A preprocessed column contains all values in [0, q)
+//! - The trace column contains the multiplicities of each value
+//! - The lookup protocol ensures the sum of multiplicities equals zero
+//!
+//! This component is used by all arithmetic operations to ensure their results
+//! remain within the valid field range.
+
 use num_traits::{One, Zero};
 use stwo::{
     core::{
@@ -22,13 +35,21 @@ use stwo_constraint_framework::{
 
 use crate::zq::Q;
 
+#[derive(Debug, Clone)]
 pub struct RangeCheck12289;
 
 impl RangeCheck12289 {
+    /// Returns the log size needed for the range check column.
+    ///
+    /// The size is log₂(Q) + 1 to accommodate all values in [0, Q).
     pub fn log_size() -> u32 {
         Q.ilog2() + 1
     }
 
+    /// Generates the preprocessed column for range checking.
+    ///
+    /// The column contains all values from 0 to Q-1, followed by zeros
+    /// to fill the remaining space up to the next power of 2.
     pub fn gen_column_simd() -> CircleEvaluation<SimdBackend, BaseField, BitReversedOrder> {
         CircleEvaluation::new(
             CanonicCoset::new(Self::log_size()).circle_domain(),
@@ -40,42 +61,66 @@ impl RangeCheck12289 {
         )
     }
 
+    /// Returns the unique identifier for this preprocessed column.
     pub fn id() -> PreProcessedColumnId {
         PreProcessedColumnId {
             id: format!("range_check_{}", Q),
         }
     }
 }
+
+// Lookup elements relation for range checking.
+//
+// This relation defines the lookup table used for range checking operations.
+// It connects the arithmetic components with the preprocessed range check column.
 relation!(LookupElements, 1);
+
+// This is a helper function for the prover to generate the trace for the range_check component
+#[derive(Debug, Clone)]
 pub struct Claim {
+    /// The log base 2 of the trace size
     pub log_size: u32,
 }
 
 impl Claim {
+    /// Returns the log sizes for the traces.
+    ///
+    /// [preprocessed_trace, trace, interaction_trace]
     pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
         let trace_log_sizes = vec![self.log_size];
         TreeVec::new(vec![vec![Q.ilog2() + 1], trace_log_sizes, vec![]])
     }
+
+    /// Mixes the claim parameters into the Fiat-Shamir channel.
     pub fn mix_into(&self, channel: &mut impl Channel) {
         channel.mix_u64(self.log_size as u64);
     }
 
+    /// Generates the trace for the range_check component
+    /// The trace contains the multiplicities of each value
     pub fn gen_trace(
         &self,
-        remainders: &[M31],
-    ) -> Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>> {
-        let mut trace = vec![M31::zero(); Q.next_power_of_two() as usize];
-        for remainder in remainders {
-            trace[remainder.0 as usize] += M31::one();
+        remainders: &[&[M31]],
+    ) -> CircleEvaluation<SimdBackend, M31, BitReversedOrder> {
+        let mut trace = vec![M31::zero(); 1 << self.log_size as usize];
+        for col in remainders {
+            for remainder in col.iter() {
+                trace[remainder.0 as usize] += M31::one();
+            }
         }
-        vec![CircleEvaluation::new(
+        CircleEvaluation::new(
             CanonicCoset::new(self.log_size).circle_domain(),
             BaseColumn::from_iter(trace),
-        )]
+        )
     }
 }
+
+// Actual component that is used in the framework
+#[derive(Debug, Clone)]
 pub struct Eval {
+    /// The claim parameters
     pub claim: Claim,
+    /// Lookup elements for range checking
     pub lookup_elements: LookupElements,
 }
 
@@ -92,6 +137,8 @@ impl FrameworkEval for Eval {
         let lookup_col_1 = eval.next_trace_mask();
         let range_check_col = eval.get_preprocessed_column(RangeCheck12289::id());
 
+        // Add the trace column to the lookup relation with coefficient -1
+        // This ensures that the sum of all lookups equals zero
         eval.add_to_relation(RelationEntry::new(
             &self.lookup_elements,
             -E::EF::from(lookup_col_1),
@@ -104,23 +151,38 @@ impl FrameworkEval for Eval {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct InteractionClaim {
+    /// The claimed sum for the interaction
     pub claimed_sum: QM31,
 }
 
 impl InteractionClaim {
+    /// Mixes the interaction claim into the Fiat-Shamir channel.
     pub fn mix_into(&self, channel: &mut impl Channel) {
         channel.mix_felts(&[self.claimed_sum]);
     }
 
+    /// Generates the interaction trace for range checking.
+    ///
+    /// This method creates the interaction trace that connects the range check component
+    /// with the arithmetic components through the lookup protocol.
+    ///
+    /// # Parameters
+    ///
+    /// - `trace`: The trace column from the range check component
+    /// - `lookup_elements`: The lookup elements for range checking
+    ///
+    /// # Returns
+    ///
+    /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
-        trace: &ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+        trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
         lookup_elements: &LookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Self,
     ) {
-        let trace = &trace[0];
         let log_size = trace.domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
         let mut col_gen = logup_gen.new_col();
@@ -144,4 +206,6 @@ impl InteractionClaim {
         (interaction_trace, Self { claimed_sum })
     }
 }
+
+/// Type alias for the range check component.
 pub type Component = FrameworkComponent<Eval>;
