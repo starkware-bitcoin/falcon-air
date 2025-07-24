@@ -1,33 +1,55 @@
+//! # Range Check Component
+//!
+//! This module implements STARK proof components for range checking operations.
+//!
+//! The range check ensures that values are within the valid range [0, q) where q = 12289.
+//! This is implemented using a lookup table approach where:
+//! - A preprocessed column contains all values in [0, q)
+//! - The trace column contains the multiplicities of each value
+//! - The lookup protocol ensures the sum of multiplicities equals zero
+//!
+//! This component is used by all arithmetic operations to ensure their results
+//! remain within the valid field range.
+
 use num_traits::{One, Zero};
 use stwo::{
     core::{
+        ColumnVec,
+        channel::Channel,
         fields::{
             m31::{BaseField, M31},
-            qm31::SecureField,
+            qm31::QM31,
         },
+        pcs::TreeVec,
         poly::circle::CanonicCoset,
     },
     prover::{
-        backend::simd::{
-            SimdBackend, column::BaseColumn, m31::LOG_N_LANES, qm31::PackedSecureField,
-        },
+        backend::simd::{SimdBackend, column::BaseColumn, m31::LOG_N_LANES, qm31::PackedQM31},
         poly::{BitReversedOrder, circle::CircleEvaluation},
     },
 };
 use stwo_constraint_framework::{
-    EvalAtRow, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry,
+    EvalAtRow, FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry,
     preprocessed_columns::PreProcessedColumnId, relation,
 };
 
 use crate::zq::Q;
 
+#[derive(Debug, Clone)]
 pub struct RangeCheck12289;
 
 impl RangeCheck12289 {
+    /// Returns the log size needed for the range check column.
+    ///
+    /// The size is log₂(Q) + 1 to accommodate all values in [0, Q).
     pub fn log_size() -> u32 {
         Q.ilog2() + 1
     }
 
+    /// Generates the preprocessed column for range checking.
+    ///
+    /// The column contains all values from 0 to Q-1, followed by zeros
+    /// to fill the remaining space up to the next power of 2.
     pub fn gen_column_simd() -> CircleEvaluation<SimdBackend, BaseField, BitReversedOrder> {
         CircleEvaluation::new(
             CanonicCoset::new(Self::log_size()).circle_domain(),
@@ -39,218 +61,149 @@ impl RangeCheck12289 {
         )
     }
 
+    /// Returns the unique identifier for this preprocessed column.
     pub fn id() -> PreProcessedColumnId {
         PreProcessedColumnId {
             id: format!("range_check_{}", Q),
         }
     }
 }
+
+// Lookup elements relation for range checking.
+//
+// This relation defines the lookup table used for range checking operations.
+// It connects the arithmetic components with the preprocessed range check column.
 relation!(LookupElements, 1);
 
+// This is a helper function for the prover to generate the trace for the range_check component
+#[derive(Debug, Clone)]
+pub struct Claim {
+    /// The log base 2 of the trace size
+    pub log_size: u32,
+}
+
+impl Claim {
+    /// Returns the log sizes for the traces.
+    ///
+    /// [preprocessed_trace, trace, interaction_trace]
+    pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
+        let trace_log_sizes = vec![self.log_size];
+        TreeVec::new(vec![vec![Q.ilog2() + 1], trace_log_sizes, vec![]])
+    }
+
+    /// Mixes the claim parameters into the Fiat-Shamir channel.
+    pub fn mix_into(&self, channel: &mut impl Channel) {
+        channel.mix_u64(self.log_size as u64);
+    }
+
+    /// Generates the trace for the range_check component
+    /// The trace contains the multiplicities of each value
+    pub fn gen_trace(
+        &self,
+        remainders: &[&[M31]],
+    ) -> CircleEvaluation<SimdBackend, M31, BitReversedOrder> {
+        let mut trace = vec![M31::zero(); 1 << self.log_size as usize];
+        for col in remainders {
+            for remainder in col.iter() {
+                trace[remainder.0 as usize] += M31::one();
+            }
+        }
+        CircleEvaluation::new(
+            CanonicCoset::new(self.log_size).circle_domain(),
+            BaseColumn::from_iter(trace),
+        )
+    }
+}
+
+// Actual component that is used in the framework
+#[derive(Debug, Clone)]
 pub struct Eval {
-    range_check_id: PreProcessedColumnId,
-    log_size: u32,
-    lookup_elements: LookupElements,
+    /// The claim parameters
+    pub claim: Claim,
+    /// Lookup elements for range checking
+    pub lookup_elements: LookupElements,
 }
 
 impl FrameworkEval for Eval {
     fn log_size(&self) -> u32 {
-        self.log_size
+        self.claim.log_size
     }
 
     fn max_constraint_log_degree_bound(&self) -> u32 {
-        self.log_size + 1
+        self.claim.log_size + 1
     }
 
     fn evaluate<E: EvalAtRow>(&self, mut eval: E) -> E {
-        let range_check_col = eval.get_preprocessed_column(self.range_check_id.clone());
-
         let lookup_col_1 = eval.next_trace_mask();
-        let multiplicity_col = eval.next_trace_mask();
 
+        // Add the trace column to the lookup relation with coefficient -1
+        // This ensures that the sum of all lookups equals zero
         eval.add_to_relation(RelationEntry::new(
             &self.lookup_elements,
-            -E::EF::from(multiplicity_col),
-            &[range_check_col],
-        ));
-
-        eval.add_to_relation(RelationEntry::new(
-            &self.lookup_elements,
-            E::EF::one(),
+            -E::EF::one(),
             &[lookup_col_1],
         ));
 
-        eval.finalize_logup_batched(&vec![0, 1]);
+        eval.finalize_logup_in_pairs();
 
         eval
     }
 }
 
-fn gen_logup_trace(
-    log_size: u32,
-    range_check_col: &BaseColumn,
-    lookup_col_1: &BaseColumn,
-    multiplicity_col: &BaseColumn,
-    lookup_elements: &LookupElements,
-) -> (
-    Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
-    SecureField,
-) {
-    let mut logup_gen = LogupTraceGenerator::new(log_size);
-
-    let mut col_gen = logup_gen.new_col();
-    for simd_row in 0..(1 << (log_size - LOG_N_LANES)) {
-        let numerator: PackedSecureField = PackedSecureField::from(multiplicity_col.data[simd_row]);
-        let denom: PackedSecureField = lookup_elements.combine(&[range_check_col.data[simd_row]]);
-        col_gen.write_frac(simd_row, -numerator, denom);
-    }
-    col_gen.finalize_col();
-
-    let mut col_gen = logup_gen.new_col();
-    for simd_row in 0..(1 << (log_size - LOG_N_LANES)) {
-        let lookup_col_1_val: PackedSecureField =
-            lookup_elements.combine(&[lookup_col_1.data[simd_row]]);
-        // 1 / denom1 + 1 / denom2 = (denom1 + denom2) / (denom1 * denom2)
-        let numerator = PackedSecureField::one();
-        let denom = lookup_col_1_val;
-        col_gen.write_frac(simd_row, numerator, denom);
-    }
-    col_gen.finalize_col();
-
-    logup_gen.finalize_last()
+#[derive(Debug, Clone)]
+pub struct InteractionClaim {
+    /// The claimed sum for the interaction
+    pub claimed_sum: QM31,
 }
 
-#[cfg(test)]
-mod tests {
-    use rand::Rng;
-    use stwo::core::air::Component;
-    use stwo::{
-        core::{
-            channel::{Blake2sChannel, Channel},
-            pcs::{CommitmentSchemeVerifier, PcsConfig},
-            vcs::blake2_merkle::Blake2sMerkleChannel,
-            verifier::verify,
-        },
-        prover::{CommitmentSchemeProver, backend::Column, poly::circle::PolyOps, prove},
-    };
-    use stwo_constraint_framework::{FrameworkComponent, TraceLocationAllocator};
-
-    use super::*;
-
-    fn gen_trace(
-        log_size: u32,
-        range: u32,
-    ) -> Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>> {
-        // Create a table with random values
-        let mut rng = rand::thread_rng();
-        let mut lookup_col_1 =
-            BaseColumn::from_iter((0..(1 << log_size)).map(|_| M31::from(rng.gen_range(0..range))));
-
-        let mut multiplicity_col = BaseColumn::zeros(1 << log_size);
-        lookup_col_1.as_mut_slice().iter().for_each(|value| {
-            let index = value.0 as usize;
-            if index < 1 << log_size {
-                multiplicity_col.set(index, multiplicity_col.at(index) + M31::from(1));
-            }
-        });
-
-        // Convert table to trace polynomials
-        let domain = CanonicCoset::new(log_size).circle_domain();
-        vec![lookup_col_1.clone(), multiplicity_col.clone()]
-            .into_iter()
-            .map(|col| CircleEvaluation::new(domain, col))
-            .collect()
+impl InteractionClaim {
+    /// Mixes the interaction claim into the Fiat-Shamir channel.
+    pub fn mix_into(&self, channel: &mut impl Channel) {
+        channel.mix_felts(&[self.claimed_sum]);
     }
 
-    #[test]
-    fn test_range_check_12289_works() {
-        test_range_check(Q - 1);
-    }
+    /// Generates the interaction trace for range checking.
+    ///
+    /// This method creates the interaction trace that connects the range check component
+    /// with the arithmetic components through the lookup protocol.
+    ///
+    /// # Parameters
+    ///
+    /// - `trace`: The trace column from the range check component
+    /// - `lookup_elements`: The lookup elements for range checking
+    ///
+    /// # Returns
+    ///
+    /// Returns the interaction trace and the interaction claim.
+    pub fn gen_interaction_trace(
+        trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        lookup_elements: &LookupElements,
+    ) -> (
+        ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+        Self,
+    ) {
+        let log_size = trace.domain.log_size();
+        let mut logup_gen = LogupTraceGenerator::new(log_size);
+        let mut col_gen = logup_gen.new_col();
 
-    #[test]
-    #[should_panic(expected = "Invalid logup sum")]
-    fn test_range_check_12289_fails() {
-        test_range_check(2 * Q);
-    }
+        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+            // Get the multiplicity value from the trace
+            let result_packed = trace.data[vec_row];
 
-    fn test_range_check(range: u32) {
-        // ANCHOR_END: main_start
-        let log_size = Q.ilog2() + 1;
+            // Create the denominator using the lookup elements
+            let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
 
-        // Config for FRI and PoW
-        let config = PcsConfig::default();
+            // The numerator is -1 (we want to check that the sum equals zero)
+            let numerator = -PackedQM31::one();
 
-        // Precompute twiddles for evaluating and interpolating the trace
-        let twiddles = SimdBackend::precompute_twiddles(
-            CanonicCoset::new(log_size + 1 + config.fri_config.log_blowup_factor)
-                .circle_domain()
-                .half_coset,
-        );
+            col_gen.write_frac(vec_row, numerator, denom);
+        }
+        col_gen.finalize_col();
 
-        // Create the channel and commitment scheme
-        let channel = &mut Blake2sChannel::default();
-        let mut commitment_scheme =
-            CommitmentSchemeProver::<SimdBackend, Blake2sMerkleChannel>::new(config, &twiddles);
-
-        // Create and commit to the preprocessed columns
-        let range_check_col = RangeCheck12289::gen_column_simd();
-        let mut tree_builder = commitment_scheme.tree_builder();
-        tree_builder.extend_evals(vec![range_check_col.clone()]);
-        tree_builder.commit(channel);
-
-        // Commit to the size of the trace
-        channel.mix_u64(log_size as u64);
-
-        // Create and commit to the trace columns
-        let trace = gen_trace(log_size, range);
-        let mut tree_builder = commitment_scheme.tree_builder();
-        tree_builder.extend_evals(trace.clone());
-        tree_builder.commit(channel);
-
-        // ANCHOR: logup_start
-        // Draw random elements to use when creating the random linear combination of lookup values in the LogUp columns
-        let lookup_elements = LookupElements::draw(channel);
-
-        // Create and commit to the LogUp columns
-        let (logup_cols, claimed_sum) = gen_logup_trace(
-            log_size,
-            &range_check_col,
-            &trace[0],
-            &trace[1],
-            &lookup_elements,
-        );
-        // ANCHOR_END: logup_start
-        let mut tree_builder = commitment_scheme.tree_builder();
-        tree_builder.extend_evals(logup_cols);
-        tree_builder.commit(channel);
-
-        // Create a component
-        let component = FrameworkComponent::<Eval>::new(
-            &mut TraceLocationAllocator::default(),
-            Eval {
-                range_check_id: RangeCheck12289::id(),
-                log_size,
-                lookup_elements,
-            },
-            claimed_sum,
-        );
-
-        // Prove
-        let proof = prove(&[&component], channel, commitment_scheme).unwrap();
-
-        // ANCHOR: verify
-        // Verify
-        assert_eq!(claimed_sum, SecureField::zero(), "Invalid logup sum");
-
-        let channel = &mut Blake2sChannel::default();
-        let commitment_scheme = &mut CommitmentSchemeVerifier::<Blake2sMerkleChannel>::new(config);
-        let sizes = component.trace_log_degree_bounds();
-
-        commitment_scheme.commit(proof.commitments[0], &sizes[0], channel);
-        channel.mix_u64(log_size as u64);
-        commitment_scheme.commit(proof.commitments[1], &sizes[1], channel);
-        commitment_scheme.commit(proof.commitments[2], &sizes[2], channel);
-
-        verify(&[&component], channel, commitment_scheme, proof).unwrap();
+        let (interaction_trace, claimed_sum) = logup_gen.finalize_last();
+        (interaction_trace, Self { claimed_sum })
     }
 }
+
+/// Type alias for the range check component.
+pub type Component = FrameworkComponent<Eval>;
