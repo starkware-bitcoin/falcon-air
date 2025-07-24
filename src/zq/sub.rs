@@ -1,13 +1,13 @@
-//! # Modular Addition Component
+//! # Modular Subtraction Component
 //!
-//! This module implements STARK proof components for modular addition operations.
+//! This module implements STARK proof components for modular subtraction operations.
 //!
-//! The modular addition operation computes (a + b) mod q, where q = 12289.
+//! The modular subtraction operation computes (a - b) mod q, where q = 12289.
 //! The operation is decomposed into:
-//! - a + b = quotient * q + remainder
+//! - a - b = remainder (mod q)
 //! - where remainder ∈ [0, q)
 //!
-//! The component generates traces for the operands (a, b), quotient, and remainder,
+//! The component generates traces for the operands (a, b) and remainder,
 //! and enforces the constraint that the remainder is within the valid range.
 
 use num_traits::One;
@@ -31,7 +31,7 @@ use stwo_constraint_framework::{
 
 use crate::zq::Q;
 
-// This is a helper function for the prover to generate the trace for the add component
+// This is a helper function for the prover to generate the trace for the sub component
 #[derive(Debug, Clone)]
 pub struct Claim {
     /// The log base 2 of the trace size
@@ -52,20 +52,9 @@ impl Claim {
         channel.mix_u64(self.log_size as u64);
     }
 
-    /// Generates the trace for modular addition operations.
-    ///
-    /// # Returns
-    ///
-    /// Returns a tuple containing:
-    /// - A vector of 4 trace columns: [a, b, quotient, remainder]
-    /// - A vector of remainder values for range checking
-    ///
-    /// # Algorithm
-    ///
-    /// 1. Generates random operands a, b ∈ [0, q)
-    /// 2. Computes quotient = ⌊(a + b) / q⌋
-    /// 3. Computes remainder = (a + b) mod q
-    /// 4. Creates trace columns for all values
+    /// Generates the trace for the sub component
+    /// Generates 2 random numbers and creates a trace for the sub component
+    /// returns the columns in this order: a, b, borrow, remainder
     pub fn gen_trace(
         &self,
     ) -> (
@@ -79,15 +68,15 @@ impl Claim {
         let b = (0..(1 << self.log_size))
             .map(|_| rng.gen_range(0..Q))
             .collect::<Vec<_>>();
-        let quotient = a
+        let borrow = a
             .iter()
             .zip(b.iter())
-            .map(|(a, b)| M31::from_u32_unchecked((a + b) / Q))
+            .map(|(a, b)| M31::from_u32_unchecked((a < b) as u32))
             .collect::<Vec<_>>();
         let remainder = a
             .iter()
             .zip(b.iter())
-            .map(|(a, b)| M31::from_u32_unchecked((a + b) % Q))
+            .map(|(a, b)| M31::from_u32_unchecked(a + (a < b) as u32 * Q - b))
             .collect::<Vec<_>>();
         let a = a
             .iter()
@@ -99,7 +88,7 @@ impl Claim {
             .collect::<Vec<_>>();
         let domain = CanonicCoset::new(self.log_size).circle_domain();
         (
-            [a, b, quotient, remainder.clone()]
+            [a, b, borrow, remainder.clone()]
                 .into_iter()
                 .map(|col| {
                     CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
@@ -113,10 +102,7 @@ impl Claim {
     }
 }
 
-/// Evaluation component for modular addition constraints.
-///
-/// This struct implements the constraint evaluation logic for modular addition,
-/// ensuring that the arithmetic relationship holds and the remainder is properly range-checked.
+// Actual component that is used in the framework
 #[derive(Debug, Clone)]
 pub struct Eval {
     /// The claim parameters
@@ -134,27 +120,20 @@ impl FrameworkEval for Eval {
         self.claim.log_size + 1
     }
 
-    /// Evaluates the modular addition constraints.
-    ///
-    /// # Constraints
-    ///
-    /// 1. **Arithmetic constraint**: a + b = quotient * Q + remainder
-    /// 2. **Range check**: remainder ∈ [0, Q) via lookup table
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
-        // Extract trace values
+        // Those values were filled during the trace generation
         let a = eval.next_trace_mask();
         let b = eval.next_trace_mask();
-        let quotient = eval.next_trace_mask();
+        let borrow = eval.next_trace_mask();
         let remainder = eval.next_trace_mask();
 
-        // Constraint: a + b = quotient * Q + remainder
+        // this is the constraint for add_mod_12289
+        // a - b = remainder + borrow * Q
         eval.add_constraint(
-            a + b - quotient * E::F::from(M31::from_u32_unchecked(Q)) - remainder.clone(),
+            a - b - remainder.clone() + borrow.clone() * E::F::from(M31::from_u32_unchecked(Q)),
         );
-        // Now we need to check that the remainder is in the range [0, Q)
-        // We do this by using the range check we defined. Here we increment the multiplicity of
-        // this value (remainder) by 1 because we want to range check it and the logup sum has to be exactly 0
-        // So here we increment and in the range_check we decrements
+        eval.add_constraint(borrow.clone() * (borrow - E::F::one()));
+
         eval.add_to_relation(RelationEntry::new(
             &self.lookup_elements,
             E::EF::one(),
@@ -165,10 +144,6 @@ impl FrameworkEval for Eval {
     }
 }
 
-/// Interaction claim for modular addition.
-///
-/// Contains the claimed sum for the interaction between the addition component
-/// and the range check component.
 #[derive(Debug, Clone)]
 pub struct InteractionClaim {
     /// The claimed sum for the interaction
@@ -181,14 +156,14 @@ impl InteractionClaim {
         channel.mix_felts(&[self.claimed_sum]);
     }
 
-    /// Generates the interaction trace for modular addition.
+    /// Generates the interaction trace for modular subtraction.
     ///
-    /// This method creates the interaction trace that connects the addition component
+    /// This method creates the interaction trace that connects the subtraction component
     /// with the range check component through the lookup protocol.
     ///
     /// # Parameters
     ///
-    /// - `trace`: The trace columns from the addition component
+    /// - `trace`: The trace columns from the subtraction component
     /// - `lookup_elements`: The lookup elements for range checking
     ///
     /// # Returns
@@ -206,7 +181,7 @@ impl InteractionClaim {
         let mut col_gen = logup_gen.new_col();
 
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            // Get the remainder value from the trace (column 3)
+            // Get the remainder value from the trace (column 2)
             let result_packed = trace[3].data[vec_row];
 
             // Create the denominator using the lookup elements
@@ -224,5 +199,5 @@ impl InteractionClaim {
     }
 }
 
-/// Type alias for the modular addition component.
+/// Type alias for the modular subtraction component.
 pub type Component = FrameworkComponent<Eval>;
