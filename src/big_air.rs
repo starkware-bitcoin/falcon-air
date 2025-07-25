@@ -12,7 +12,11 @@
 //! All operations are performed in the field Z_q where q = 12289, which is compatible
 //! with the Falcon signature scheme requirements.
 
-use crate::zq::*;
+use crate::{
+    ntt::*,
+    traits::preprocessed::{PreprocessedColumnClaim, PreprocessedColumnInteractionClaim},
+    zq::*,
+};
 use stwo::{
     core::{
         channel::{Blake2sChannel, Channel},
@@ -44,6 +48,16 @@ pub struct BigClaim {
     pub sub: sub::Claim,
     /// Claim for range checking operations
     pub range_check: range_check::Claim,
+    pub roots_2: twiddles::Claim,
+    pub roots_4: twiddles::Claim,
+    pub roots_8: twiddles::Claim,
+    pub roots_16: twiddles::Claim,
+    pub roots_32: twiddles::Claim,
+    pub roots_64: twiddles::Claim,
+    pub roots_128: twiddles::Claim,
+    pub roots_256: twiddles::Claim,
+    pub roots_512: twiddles::Claim,
+    pub roots_1024: twiddles::Claim,
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +70,16 @@ pub struct AllTraces {
     sub: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace column from range checking: multiplicities
     range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    roots_2: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    roots_4: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    roots_8: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    roots_16: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    roots_32: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    roots_64: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    roots_128: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    roots_256: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    roots_512: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    roots_1024: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
 }
 
 impl AllTraces {
@@ -65,12 +89,32 @@ impl AllTraces {
         mul: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         sub: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_2: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_4: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_8: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_16: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_32: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_64: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_128: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_256: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_512: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_1024: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     ) -> Self {
         Self {
             add,
             mul,
             sub,
             range_check,
+            roots_2,
+            roots_4,
+            roots_8,
+            roots_16,
+            roots_32,
+            roots_64,
+            roots_128,
+            roots_256,
+            roots_512,
+            roots_1024,
         }
     }
 }
@@ -86,6 +130,16 @@ impl BigClaim {
             self.mul.log_sizes(),
             self.sub.log_sizes(),
             self.range_check.log_sizes(),
+            self.roots_2.log_sizes(),
+            self.roots_4.log_sizes(),
+            self.roots_8.log_sizes(),
+            self.roots_16.log_sizes(),
+            self.roots_32.log_sizes(),
+            self.roots_64.log_sizes(),
+            self.roots_128.log_sizes(),
+            self.roots_256.log_sizes(),
+            self.roots_512.log_sizes(),
+            self.roots_1024.log_sizes(),
         ];
         TreeVec::concat_cols(trees.into_iter())
     }
@@ -99,6 +153,16 @@ impl BigClaim {
         self.mul.mix_into(channel);
         self.sub.mix_into(channel);
         self.range_check.mix_into(channel);
+        self.roots_2.mix_into(channel);
+        self.roots_4.mix_into(channel);
+        self.roots_8.mix_into(channel);
+        self.roots_16.mix_into(channel);
+        self.roots_32.mix_into(channel);
+        self.roots_64.mix_into(channel);
+        self.roots_128.mix_into(channel);
+        self.roots_256.mix_into(channel);
+        self.roots_512.mix_into(channel);
+        self.roots_1024.mix_into(channel);
     }
 
     /// Generates traces for all arithmetic operations.
@@ -127,6 +191,17 @@ impl BigClaim {
         let range_check_trace =
             self.range_check
                 .gen_trace(&[&add_remainders, &mul_remainders, &sub_remainders]);
+        // TODO: get what root we used during the NTT
+        let roots_2_trace = self.roots_2.gen_trace(&[]);
+        let roots_4_trace = self.roots_4.gen_trace(&[]);
+        let roots_8_trace = self.roots_8.gen_trace(&[]);
+        let roots_16_trace = self.roots_16.gen_trace(&[]);
+        let roots_32_trace = self.roots_32.gen_trace(&[]);
+        let roots_64_trace = self.roots_64.gen_trace(&[]);
+        let roots_128_trace = self.roots_128.gen_trace(&[]);
+        let roots_256_trace = self.roots_256.gen_trace(&[]);
+        let roots_512_trace = self.roots_512.gen_trace(&[]);
+        let roots_1024_trace = self.roots_1024.gen_trace(&[]);
         (
             add_trace
                 .clone()
@@ -135,7 +210,22 @@ impl BigClaim {
                 .chain(sub_trace.clone())
                 .chain([range_check_trace.clone()])
                 .collect::<Vec<_>>(),
-            AllTraces::new(add_trace, mul_trace, sub_trace, range_check_trace),
+            AllTraces::new(
+                add_trace,
+                mul_trace,
+                sub_trace,
+                range_check_trace,
+                roots_2_trace,
+                roots_4_trace,
+                roots_8_trace,
+                roots_16_trace,
+                roots_32_trace,
+                roots_64_trace,
+                roots_128_trace,
+                roots_256_trace,
+                roots_512_trace,
+                roots_1024_trace,
+            ),
         )
     }
 }
@@ -150,6 +240,16 @@ pub struct BigInteractionClaim {
     pub sub: sub::InteractionClaim,
     /// Interaction claim for range checking
     pub range_check: range_check::InteractionClaim,
+    pub roots_2: twiddles::InteractionClaim,
+    pub roots_4: twiddles::InteractionClaim,
+    pub roots_8: twiddles::InteractionClaim,
+    pub roots_16: twiddles::InteractionClaim,
+    pub roots_32: twiddles::InteractionClaim,
+    pub roots_64: twiddles::InteractionClaim,
+    pub roots_128: twiddles::InteractionClaim,
+    pub roots_256: twiddles::InteractionClaim,
+    pub roots_512: twiddles::InteractionClaim,
+    pub roots_1024: twiddles::InteractionClaim,
 }
 
 impl BigInteractionClaim {
@@ -159,6 +259,16 @@ impl BigInteractionClaim {
         self.mul.mix_into(channel);
         self.sub.mix_into(channel);
         self.range_check.mix_into(channel);
+        self.roots_2.mix_into(channel);
+        self.roots_4.mix_into(channel);
+        self.roots_8.mix_into(channel);
+        self.roots_16.mix_into(channel);
+        self.roots_32.mix_into(channel);
+        self.roots_64.mix_into(channel);
+        self.roots_128.mix_into(channel);
+        self.roots_256.mix_into(channel);
+        self.roots_512.mix_into(channel);
+        self.roots_1024.mix_into(channel);
     }
 
     /// Computes the total claimed sum across all interactions.
@@ -170,6 +280,16 @@ impl BigInteractionClaim {
             + self.mul.claimed_sum
             + self.sub.claimed_sum
             + self.range_check.claimed_sum
+            + self.roots_2.claimed_sum
+            + self.roots_4.claimed_sum
+            + self.roots_8.claimed_sum
+            + self.roots_16.claimed_sum
+            + self.roots_32.claimed_sum
+            + self.roots_64.claimed_sum
+            + self.roots_128.claimed_sum
+            + self.roots_256.claimed_sum
+            + self.roots_512.claimed_sum
+            + self.roots_1024.claimed_sum
     }
 
     /// Generates interaction traces for all components.
@@ -186,25 +306,77 @@ impl BigInteractionClaim {
     ///
     /// Returns the combined interaction traces and the big interaction claim.
     pub fn gen_interaction_trace(
-        lookup_elements: &range_check::LookupElements,
+        rc_lookup_elements: &range_check::LookupElements,
+        roots_lookup_elements: &twiddles::LookupElements,
         add_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         mul_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         sub_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         range_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_2_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_4_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_8_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_16_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_32_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_64_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_128_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_256_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_512_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_1024_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     ) -> (
         Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Self,
     ) {
         let (add_interaction_trace, add_interaction_claim) =
-            add::InteractionClaim::gen_interaction_trace(add_trace, lookup_elements);
+            add::InteractionClaim::gen_interaction_trace(add_trace, rc_lookup_elements);
         let (mul_interaction_trace, mul_interaction_claim) =
-            mul::InteractionClaim::gen_interaction_trace(mul_trace, lookup_elements);
+            mul::InteractionClaim::gen_interaction_trace(mul_trace, rc_lookup_elements);
         let (sub_interaction_trace, sub_interaction_claim) =
-            sub::InteractionClaim::gen_interaction_trace(sub_trace, lookup_elements);
+            sub::InteractionClaim::gen_interaction_trace(sub_trace, rc_lookup_elements);
         let (range_check_interaction_trace, range_check_interaction_claim) =
             range_check::InteractionClaim::gen_interaction_trace(
                 range_check_trace,
-                lookup_elements,
+                rc_lookup_elements,
+            );
+        let (roots_2_interaction_trace, roots_2_interaction_claim) =
+            twiddles::InteractionClaim::gen_interaction_trace(roots_2_trace, roots_lookup_elements);
+        let (roots_4_interaction_trace, roots_4_interaction_claim) =
+            twiddles::InteractionClaim::gen_interaction_trace(roots_4_trace, roots_lookup_elements);
+        let (roots_8_interaction_trace, roots_8_interaction_claim) =
+            twiddles::InteractionClaim::gen_interaction_trace(roots_8_trace, roots_lookup_elements);
+        let (roots_16_interaction_trace, roots_16_interaction_claim) =
+            twiddles::InteractionClaim::gen_interaction_trace(
+                roots_16_trace,
+                roots_lookup_elements,
+            );
+        let (roots_32_interaction_trace, roots_32_interaction_claim) =
+            twiddles::InteractionClaim::gen_interaction_trace(
+                roots_32_trace,
+                roots_lookup_elements,
+            );
+        let (roots_64_interaction_trace, roots_64_interaction_claim) =
+            twiddles::InteractionClaim::gen_interaction_trace(
+                roots_64_trace,
+                roots_lookup_elements,
+            );
+        let (roots_128_interaction_trace, roots_128_interaction_claim) =
+            twiddles::InteractionClaim::gen_interaction_trace(
+                roots_128_trace,
+                roots_lookup_elements,
+            );
+        let (roots_256_interaction_trace, roots_256_interaction_claim) =
+            twiddles::InteractionClaim::gen_interaction_trace(
+                roots_256_trace,
+                roots_lookup_elements,
+            );
+        let (roots_512_interaction_trace, roots_512_interaction_claim) =
+            twiddles::InteractionClaim::gen_interaction_trace(
+                roots_512_trace,
+                roots_lookup_elements,
+            );
+        let (roots_1024_interaction_trace, roots_1024_interaction_claim) =
+            twiddles::InteractionClaim::gen_interaction_trace(
+                roots_1024_trace,
+                roots_lookup_elements,
             );
         (
             add_interaction_trace
@@ -212,12 +384,32 @@ impl BigInteractionClaim {
                 .chain(mul_interaction_trace)
                 .chain(sub_interaction_trace)
                 .chain(range_check_interaction_trace)
+                .chain(roots_2_interaction_trace)
+                .chain(roots_4_interaction_trace)
+                .chain(roots_8_interaction_trace)
+                .chain(roots_16_interaction_trace)
+                .chain(roots_32_interaction_trace)
+                .chain(roots_64_interaction_trace)
+                .chain(roots_128_interaction_trace)
+                .chain(roots_256_interaction_trace)
+                .chain(roots_512_interaction_trace)
+                .chain(roots_1024_interaction_trace)
                 .collect(),
             Self {
                 add: add_interaction_claim,
                 mul: mul_interaction_claim,
                 sub: sub_interaction_claim,
                 range_check: range_check_interaction_claim,
+                roots_2: roots_2_interaction_claim,
+                roots_4: roots_4_interaction_claim,
+                roots_8: roots_8_interaction_claim,
+                roots_16: roots_16_interaction_claim,
+                roots_32: roots_32_interaction_claim,
+                roots_64: roots_64_interaction_claim,
+                roots_128: roots_128_interaction_claim,
+                roots_256: roots_256_interaction_claim,
+                roots_512: roots_512_interaction_claim,
+                roots_1024: roots_1024_interaction_claim,
             },
         )
     }
@@ -271,6 +463,16 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
         mul: mul::Claim { log_size },
         sub: sub::Claim { log_size },
         range_check: range_check::Claim { log_size },
+        roots_2: twiddles::Claim { log_size },
+        roots_4: twiddles::Claim { log_size },
+        roots_8: twiddles::Claim { log_size },
+        roots_16: twiddles::Claim { log_size },
+        roots_32: twiddles::Claim { log_size },
+        roots_64: twiddles::Claim { log_size },
+        roots_128: twiddles::Claim { log_size },
+        roots_256: twiddles::Claim { log_size },
+        roots_512: twiddles::Claim { log_size },
+        roots_1024: twiddles::Claim { log_size },
     };
     let (trace, traces) = claim.gen_trace();
     claim.mix_into(channel);
@@ -283,15 +485,27 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     let interaction_pow = SimdBackend::grind(channel, 2);
     channel.mix_u64(interaction_pow);
 
-    let relations = range_check::LookupElements::draw(channel);
+    let rc_lookup_elements = range_check::LookupElements::draw(channel);
+    let roots_lookup_elements = twiddles::LookupElements::draw(channel);
 
     // Generate and commit to interaction traces
     let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
-        &relations,
+        &rc_lookup_elements,
+        &roots_lookup_elements,
         &traces.add,
         &traces.mul,
         &traces.sub,
         &traces.range_check,
+        &traces.roots_2,
+        &traces.roots_4,
+        &traces.roots_8,
+        &traces.roots_16,
+        &traces.roots_32,
+        &traces.roots_64,
+        &traces.roots_128,
+        &traces.roots_256,
+        &traces.roots_512,
+        &traces.roots_1024,
     );
     interaction_claim.mix_into(channel);
 
@@ -311,7 +525,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
                 &mut tree_span_provider,
                 add::Eval {
                     claim: add::Claim { log_size },
-                    lookup_elements: relations.clone(),
+                    lookup_elements: rc_lookup_elements.clone(),
                 },
                 interaction_claim.add.claimed_sum,
             ),
@@ -319,7 +533,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
                 &mut tree_span_provider,
                 mul::Eval {
                     claim: mul::Claim { log_size },
-                    lookup_elements: relations.clone(),
+                    lookup_elements: rc_lookup_elements.clone(),
                 },
                 interaction_claim.mul.claimed_sum,
             ),
@@ -327,7 +541,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
                 &mut tree_span_provider,
                 sub::Eval {
                     claim: sub::Claim { log_size },
-                    lookup_elements: relations.clone(),
+                    lookup_elements: rc_lookup_elements.clone(),
                 },
                 interaction_claim.sub.claimed_sum,
             ),
@@ -335,9 +549,89 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
                 &mut tree_span_provider,
                 range_check::Eval {
                     claim: range_check::Claim { log_size },
-                    lookup_elements: relations.clone(),
+                    lookup_elements: rc_lookup_elements.clone(),
                 },
                 interaction_claim.range_check.claimed_sum,
+            ),
+            &twiddles::Component::new(
+                &mut tree_span_provider,
+                twiddles::Eval {
+                    claim: twiddles::Claim { log_size },
+                    lookup_elements: roots_lookup_elements.clone(),
+                },
+                interaction_claim.roots_2.claimed_sum,
+            ),
+            &twiddles::Component::new(
+                &mut tree_span_provider,
+                twiddles::Eval {
+                    claim: twiddles::Claim { log_size },
+                    lookup_elements: roots_lookup_elements.clone(),
+                },
+                interaction_claim.roots_4.claimed_sum,
+            ),
+            &twiddles::Component::new(
+                &mut tree_span_provider,
+                twiddles::Eval {
+                    claim: twiddles::Claim { log_size },
+                    lookup_elements: roots_lookup_elements.clone(),
+                },
+                interaction_claim.roots_8.claimed_sum,
+            ),
+            &twiddles::Component::new(
+                &mut tree_span_provider,
+                twiddles::Eval {
+                    claim: twiddles::Claim { log_size },
+                    lookup_elements: roots_lookup_elements.clone(),
+                },
+                interaction_claim.roots_16.claimed_sum,
+            ),
+            &twiddles::Component::new(
+                &mut tree_span_provider,
+                twiddles::Eval {
+                    claim: twiddles::Claim { log_size },
+                    lookup_elements: roots_lookup_elements.clone(),
+                },
+                interaction_claim.roots_32.claimed_sum,
+            ),
+            &twiddles::Component::new(
+                &mut tree_span_provider,
+                twiddles::Eval {
+                    claim: twiddles::Claim { log_size },
+                    lookup_elements: roots_lookup_elements.clone(),
+                },
+                interaction_claim.roots_64.claimed_sum,
+            ),
+            &twiddles::Component::new(
+                &mut tree_span_provider,
+                twiddles::Eval {
+                    claim: twiddles::Claim { log_size },
+                    lookup_elements: roots_lookup_elements.clone(),
+                },
+                interaction_claim.roots_128.claimed_sum,
+            ),
+            &twiddles::Component::new(
+                &mut tree_span_provider,
+                twiddles::Eval {
+                    claim: twiddles::Claim { log_size },
+                    lookup_elements: roots_lookup_elements.clone(),
+                },
+                interaction_claim.roots_256.claimed_sum,
+            ),
+            &twiddles::Component::new(
+                &mut tree_span_provider,
+                twiddles::Eval {
+                    claim: twiddles::Claim { log_size },
+                    lookup_elements: roots_lookup_elements.clone(),
+                },
+                interaction_claim.roots_512.claimed_sum,
+            ),
+            &twiddles::Component::new(
+                &mut tree_span_provider,
+                twiddles::Eval {
+                    claim: twiddles::Claim { log_size },
+                    lookup_elements: roots_lookup_elements.clone(),
+                },
+                interaction_claim.roots_1024.claimed_sum,
             ),
         ],
         channel,

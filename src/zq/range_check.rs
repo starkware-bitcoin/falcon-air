@@ -33,7 +33,13 @@ use stwo_constraint_framework::{
     preprocessed_columns::PreProcessedColumnId, relation,
 };
 
-use crate::zq::Q;
+use crate::{
+    traits::preprocessed::{
+        DrawRelation, PreprocessedColumnClaim, PreprocessedColumnInteractionClaim,
+        PreprocessedLookupElements,
+    },
+    zq::Q,
+};
 
 #[derive(Debug, Clone)]
 pub struct RangeCheck12289;
@@ -74,6 +80,11 @@ impl RangeCheck12289 {
 // This relation defines the lookup table used for range checking operations.
 // It connects the arithmetic components with the preprocessed range check column.
 relation!(LookupElements, 1);
+impl DrawRelation for LookupElements {
+    fn draw(channel: &mut impl Channel) -> PreprocessedLookupElements {
+        PreprocessedLookupElements::RangeCheck(Self::draw(channel))
+    }
+}
 
 // This is a helper function for the prover to generate the trace for the range_check component
 #[derive(Debug, Clone)]
@@ -82,23 +93,23 @@ pub struct Claim {
     pub log_size: u32,
 }
 
-impl Claim {
+impl PreprocessedColumnClaim for Claim {
     /// Returns the log sizes for the traces.
     ///
     /// [preprocessed_trace, trace, interaction_trace]
-    pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
+    fn log_sizes(&self) -> TreeVec<Vec<u32>> {
         let trace_log_sizes = vec![self.log_size];
         TreeVec::new(vec![vec![Q.ilog2() + 1], trace_log_sizes, vec![]])
     }
 
     /// Mixes the claim parameters into the Fiat-Shamir channel.
-    pub fn mix_into(&self, channel: &mut impl Channel) {
+    fn mix_into(&self, channel: &mut impl Channel) {
         channel.mix_u64(self.log_size as u64);
     }
 
     /// Generates the trace for the range_check component
     /// The trace contains the multiplicities of each value
-    pub fn gen_trace(
+    fn gen_trace(
         &self,
         remainders: &[&[M31]],
     ) -> CircleEvaluation<SimdBackend, M31, BitReversedOrder> {
@@ -156,9 +167,9 @@ pub struct InteractionClaim {
     pub claimed_sum: QM31,
 }
 
-impl InteractionClaim {
+impl PreprocessedColumnInteractionClaim<LookupElements> for InteractionClaim {
     /// Mixes the interaction claim into the Fiat-Shamir channel.
-    pub fn mix_into(&self, channel: &mut impl Channel) {
+    fn mix_into(&self, channel: &mut impl Channel) {
         channel.mix_felts(&[self.claimed_sum]);
     }
 
@@ -175,7 +186,7 @@ impl InteractionClaim {
     /// # Returns
     ///
     /// Returns the interaction trace and the interaction claim.
-    pub fn gen_interaction_trace(
+    fn gen_interaction_trace(
         trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
         lookup_elements: &LookupElements,
     ) -> (
