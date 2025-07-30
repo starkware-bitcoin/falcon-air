@@ -14,7 +14,6 @@ use stwo_constraint_framework::preprocessed_columns::PreProcessedColumnId;
 
 pub enum PreprocessedLookupElements {
     RangeCheck(crate::zq::range_check::LookupElements),
-    Roots(crate::ntt::twiddles::LookupElements),
 }
 
 pub trait PreprocessedColumnInteractionClaim<L: DrawRelation> {

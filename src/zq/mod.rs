@@ -17,3 +17,9 @@ pub mod sub;
 /// This value (12 * 1024 + 1 = 12289) is chosen to be compatible with
 /// the Falcon signature scheme requirements.
 pub const Q: u32 = 12 * 1024 + 1;
+
+#[derive(Clone)]
+pub struct OperationElements<E: stwo_constraint_framework::EvalAtRow> {
+    pub quotient: E::F,
+    pub remainder: E::F,
+}

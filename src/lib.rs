@@ -13,6 +13,6 @@
 //! efficient constraint evaluation and polynomial commitment schemes.
 
 pub mod big_air;
-pub mod ntt;
+pub mod ntts;
 pub mod traits;
 pub mod zq;
