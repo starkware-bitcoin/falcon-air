@@ -1,5 +1,3 @@
-use itertools::Itertools;
-
 use stwo::core::fields::m31::M31;
 
 use crate::{
@@ -31,17 +29,18 @@ pub struct NTT<const HALF_POLY_DEGREE: usize>;
 ///
 /// The `OperationElements<E>` type contains both quotient and remainder values
 /// for modular arithmetic operations.
+#[derive(Clone, Debug)]
 pub struct NTTState<E: stwo_constraint_framework::EvalAtRow> {
     /// First polynomial coefficient
-    f0: E::F,
+    pub f0: E::F,
     /// Second polynomial coefficient  
-    f1: E::F,
+    pub f1: E::F,
     /// Intermediate result: f1 * sqrt(-1) with modular arithmetic components
-    f1_times_sq1_elts: OperationElements<E>,
+    pub f1_times_sq1_elts: OperationElements<E>,
     /// Butterfly operation result: f0 + f1 * sqrt(-1) with modular arithmetic components
-    f0_plus_f1_times_sq1_elts: OperationElements<E>,
+    pub f0_plus_f1_times_sq1_elts: OperationElements<E>,
     /// Butterfly operation result: f0 - f1 * sqrt(-1) with modular arithmetic components
-    f0_minus_f1_times_sq1_elts: OperationElements<E>,
+    pub f0_minus_f1_times_sq1_elts: OperationElements<E>,
 }
 
 impl<const HALF_POLY_DEGREE: usize> NTT<HALF_POLY_DEGREE> {
@@ -60,7 +59,6 @@ impl<const HALF_POLY_DEGREE: usize> NTT<HALF_POLY_DEGREE> {
     /// * `lookup_elements` - Lookup table elements for modular arithmetic operations.
     /// * `eval` - Evaluation context for constraint framework operations.
     pub fn evaluate<E: stwo_constraint_framework::EvalAtRow>(
-        &self,
         f: &[NTTState<E>; HALF_POLY_DEGREE],
         to_merge: &[&[MergeNTTState<E>; HALF_POLY_DEGREE]],
         lookup_elements: &crate::zq::range_check::LookupElements,
@@ -104,21 +102,9 @@ impl<const HALF_POLY_DEGREE: usize> NTT<HALF_POLY_DEGREE> {
 
         // Step 3: Perform merge operations to combine results from butterfly operations
         // The to_merge array contains all the merging steps for different levels of the NTT tree
-        for (i, merge) in to_merge.iter().enumerate() {
-            // Split the arrays into 2^(i+1) sized chunks to correctly verify each merge
-            // This ensures proper grouping of elements for each level of the merge tree
-            let merge_args = merge
-                .iter()
-                .chunks(1 << (i + 1))
-                .into_iter()
-                .map(|slice| slice.collect::<Vec<_>>())
-                .collect::<Vec<Vec<_>>>();
-
-            // Process each chunk of merge arguments
-            for merge_arg in merge_args {
-                // Perform the merge operation for this chunk
-                MergeNTT::evaluate(&merge_arg, lookup_elements, eval);
-            }
+        for merge in to_merge {
+            // Perform the merge operation for this chunk
+            MergeNTT::evaluate(*merge, lookup_elements, eval);
         }
     }
 }

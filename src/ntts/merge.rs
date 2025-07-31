@@ -57,7 +57,7 @@ impl MergeNTT {
     /// * `eval` - Evaluation context for constraint framework operations.
     #[allow(clippy::type_complexity)]
     pub fn evaluate<E: stwo_constraint_framework::EvalAtRow>(
-        f: &[&MergeNTTState<E>],
+        f: &[MergeNTTState<E>],
         lookup_elements: &crate::zq::range_check::LookupElements,
         eval: &mut E,
     ) {
