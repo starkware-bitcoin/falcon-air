@@ -16,7 +16,10 @@ use stwo::{
     core::{
         ColumnVec,
         channel::Channel,
-        fields::{m31::M31, qm31::SecureField},
+        fields::{
+            m31::M31,
+            qm31::{SECURE_EXTENSION_DEGREE, SecureField},
+        },
         pcs::TreeVec,
         poly::circle::CanonicCoset,
     },
@@ -44,7 +47,11 @@ impl Claim {
     /// [preprocessed_trace, trace, interaction_trace]
     pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
         let trace_log_sizes = vec![self.log_size];
-        TreeVec::new(vec![vec![], trace_log_sizes, vec![]])
+        TreeVec::new(vec![
+            vec![],
+            trace_log_sizes,
+            vec![self.log_size; 2 * SECURE_EXTENSION_DEGREE],
+        ])
     }
 
     /// Mixes the claim parameters into the Fiat-Shamir channel.
@@ -149,7 +156,7 @@ impl FrameworkEval for Eval {
 
         // Constraint: a + b = quotient * Q + remainder
         eval.add_constraint(
-            a + b - quotient * E::F::from(M31::from_u32_unchecked(Q)) - remainder.clone(),
+            a + b.clone() - quotient * E::F::from(M31::from_u32_unchecked(Q)) - remainder.clone(),
         );
         // Now we need to check that the remainder is in the range [0, Q)
         // We do this by using the range check we defined. Here we increment the multiplicity of
@@ -159,6 +166,11 @@ impl FrameworkEval for Eval {
             &self.lookup_elements,
             E::EF::one(),
             &[remainder],
+        ));
+        eval.add_to_relation(RelationEntry::new(
+            &self.lookup_elements,
+            E::EF::one(),
+            &[b],
         ));
         eval.finalize_logup_in_pairs();
         eval
@@ -203,11 +215,28 @@ impl InteractionClaim {
     ) {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
-        let mut col_gen = logup_gen.new_col();
 
+        // Interaction trace for the remainder
+        let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             // Get the remainder value from the trace (column 3)
             let result_packed = trace[3].data[vec_row];
+
+            // Create the denominator using the lookup elements
+            let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
+
+            // The numerator is 1 (we want to check that remainder is in the range)
+            let numerator = PackedQM31::one();
+
+            col_gen.write_frac(vec_row, numerator, denom);
+        }
+        col_gen.finalize_col();
+
+        // Interaction trace for the b
+        let mut col_gen = logup_gen.new_col();
+        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+            // Get the remainder value from the trace (column 3)
+            let result_packed = trace[1].data[vec_row];
 
             // Create the denominator using the lookup elements
             let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
