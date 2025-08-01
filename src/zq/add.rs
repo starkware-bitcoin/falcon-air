@@ -106,7 +106,7 @@ impl Claim {
             .collect::<Vec<_>>();
         let domain = CanonicCoset::new(self.log_size).circle_domain();
         (
-            [a, b.clone(), quotient, remainder.clone()]
+            [a.clone(), b.clone(), quotient, remainder.clone()]
                 .into_iter()
                 .map(|col| {
                     CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
@@ -115,7 +115,7 @@ impl Claim {
                     )
                 })
                 .collect::<Vec<_>>(),
-            remainder.into_iter().chain(b).collect::<Vec<_>>(),
+            remainder.into_iter().chain(b).chain(a).collect::<Vec<_>>(),
         )
     }
 }
@@ -156,7 +156,9 @@ impl FrameworkEval for Eval {
 
         // Constraint: a + b = quotient * Q + remainder
         eval.add_constraint(
-            a + b.clone() - quotient * E::F::from(M31::from_u32_unchecked(Q)) - remainder.clone(),
+            a.clone() + b.clone()
+                - quotient * E::F::from(M31::from_u32_unchecked(Q))
+                - remainder.clone(),
         );
         // Now we need to check that the remainder is in the range [0, Q)
         // We do this by using the range check we defined. Here we increment the multiplicity of
@@ -171,6 +173,11 @@ impl FrameworkEval for Eval {
             &self.lookup_elements,
             E::EF::one(),
             &[b],
+        ));
+        eval.add_to_relation(RelationEntry::new(
+            &self.lookup_elements,
+            E::EF::one(),
+            &[a],
         ));
         eval.finalize_logup();
         eval
@@ -237,6 +244,20 @@ impl InteractionClaim {
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             // Get the remainder value from the trace (column 3)
             let result_packed = trace[1].data[vec_row];
+
+            // Create the denominator using the lookup elements
+            let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
+
+            // The numerator is 1 (we want to check that remainder is in the range)
+            let numerator = PackedQM31::one();
+
+            col_gen.write_frac(vec_row, numerator, denom);
+        }
+        col_gen.finalize_col();
+        let mut col_gen = logup_gen.new_col();
+        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+            // Get the remainder value from the trace (column 3)
+            let result_packed = trace[0].data[vec_row];
 
             // Create the denominator using the lookup elements
             let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
