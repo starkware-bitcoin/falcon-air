@@ -18,7 +18,7 @@ use stwo::{
         channel::Channel,
         fields::{
             m31::{BaseField, M31},
-            qm31::QM31,
+            qm31::{QM31, SECURE_EXTENSION_DEGREE},
         },
         pcs::TreeVec,
         poly::circle::CanonicCoset,
@@ -88,7 +88,11 @@ impl Claim {
     /// [preprocessed_trace, trace, interaction_trace]
     pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
         let trace_log_sizes = vec![self.log_size];
-        TreeVec::new(vec![vec![Q.ilog2() + 1], trace_log_sizes, vec![]])
+        TreeVec::new(vec![
+            vec![Q.ilog2() + 1],
+            trace_log_sizes,
+            vec![self.log_size; SECURE_EXTENSION_DEGREE],
+        ])
     }
 
     /// Mixes the claim parameters into the Fiat-Shamir channel.
