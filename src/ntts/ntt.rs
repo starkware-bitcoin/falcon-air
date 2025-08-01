@@ -1,4 +1,4 @@
-use num_traits::One;
+use num_traits::{One, Zero};
 use stwo::{
     core::{
         ColumnVec,
@@ -9,17 +9,20 @@ use stwo::{
         },
         pcs::TreeVec,
         poly::circle::CanonicCoset,
+        utils::{bit_reverse, bit_reverse_index},
     },
     prover::{
         backend::simd::{SimdBackend, column::BaseColumn, m31::LOG_N_LANES, qm31::PackedQM31},
         poly::{BitReversedOrder, circle::CircleEvaluation},
     },
 };
-use stwo_constraint_framework::{
-    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry,
-};
+use stwo_constraint_framework::{FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation};
 
-use crate::zq::range_check;
+use crate::{
+    POLY_LOG_SIZE,
+    ntts::SQ1,
+    zq::{Q, add::AddMod, mul::MulMod, range_check, sub::SubMod},
+};
 
 #[derive(Debug, Clone)]
 pub struct Claim {
@@ -47,14 +50,59 @@ impl Claim {
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<M31>,
     ) {
-        let poly = (1..17).map(M31::from_u32_unchecked);
+        let mut poly = (1..17).collect::<Vec<_>>();
+        bit_reverse(&mut poly);
+        let trace = poly
+            .chunks(2)
+            .flat_map(|chunk| {
+                let f0 = chunk[0];
+                let f1 = chunk[1];
+                let f1_times_sq1_quotient = (f1 * SQ1) / Q;
+                let f1_times_sq1_remainder = (f1 * SQ1) % Q;
+
+                let f0_plus_f1_times_sq1_quotient = (f0 + f1_times_sq1_remainder) / Q;
+                let f0_plus_f1_times_sq1_remainder = (f0 + f1_times_sq1_remainder) % Q;
+
+                let f0_minus_f1_times_sq1_quotient = (f0 < f1_times_sq1_remainder) as u32;
+                let f0_minus_f1_times_sq1_remainder =
+                    (f0 + f0_minus_f1_times_sq1_quotient * Q - f1_times_sq1_remainder) % Q;
+
+                [
+                    f0,
+                    f1,
+                    f1_times_sq1_quotient,
+                    f1_times_sq1_remainder,
+                    f0_plus_f1_times_sq1_quotient,
+                    f0_plus_f1_times_sq1_remainder,
+                    f0_minus_f1_times_sq1_quotient,
+                    f0_minus_f1_times_sq1_remainder,
+                ]
+                .into_iter()
+                .map(M31::from_u32_unchecked)
+                .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let mut remainders = Vec::with_capacity(3 * (1 << self.log_size));
+        for i in 0..(1 << (self.log_size - 1)) {
+            remainders.push(trace[i * 8 + 3]);
+            remainders.push(trace[i * 8 + 5]);
+            remainders.push(trace[i * 8 + 7]);
+        }
         let domain = CanonicCoset::new(self.log_size).circle_domain();
+        let bit_reversed_0 = bit_reverse_index(0, self.log_size);
         (
-            vec![CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
-                domain,
-                BaseColumn::from_iter(poly.clone()),
-            )],
-            poly.collect(),
+            trace
+                .into_iter()
+                .map(|val| {
+                    let mut col = vec![M31::zero(); 1 << self.log_size];
+                    col[bit_reversed_0] = val;
+                    CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
+                        domain,
+                        BaseColumn::from_iter(col),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            remainders,
         )
     }
 }
@@ -77,12 +125,44 @@ impl FrameworkEval for Eval {
     }
 
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
-        let val = eval.next_trace_mask();
-        eval.add_to_relation(RelationEntry::new(
-            &self.lookup_elements,
-            E::EF::one(),
-            &[val],
-        ));
+        let sq1 = E::F::from(M31::from_u32_unchecked(SQ1));
+        for _ in 0..1 << (POLY_LOG_SIZE - 1) {
+            let f0 = eval.next_trace_mask();
+            let f1 = eval.next_trace_mask();
+            let f1_times_sq1_quotient = eval.next_trace_mask();
+            let f1_times_sq1_remainder = eval.next_trace_mask();
+
+            let f0_plus_f1_times_sq1_quotient = eval.next_trace_mask();
+            let f0_plus_f1_times_sq1_remainder = eval.next_trace_mask();
+
+            let f0_minus_f1_times_sq1_quotient = eval.next_trace_mask();
+            let f0_minus_f1_times_sq1_remainder = eval.next_trace_mask();
+
+            MulMod::new(
+                f1,
+                sq1.clone(),
+                f1_times_sq1_quotient.clone(),
+                f1_times_sq1_remainder.clone(),
+            )
+            .evaluate(&self.lookup_elements, &mut eval);
+
+            AddMod::new(
+                f0.clone(),
+                f1_times_sq1_remainder.clone(),
+                f0_plus_f1_times_sq1_quotient,
+                f0_plus_f1_times_sq1_remainder,
+            )
+            .evaluate(&self.lookup_elements, &mut eval);
+
+            SubMod::new(
+                f0,
+                f1_times_sq1_remainder,
+                f0_minus_f1_times_sq1_quotient,
+                f0_minus_f1_times_sq1_remainder,
+            )
+            .evaluate(&self.lookup_elements, &mut eval);
+        }
+
         eval.finalize_logup();
         eval
     }
@@ -124,20 +204,24 @@ impl InteractionClaim {
         let mut logup_gen = LogupTraceGenerator::new(log_size);
 
         // Interaction trace for the remainder
-        let mut col_gen = logup_gen.new_col();
-        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            // Get the remainder value from the trace (column 3)
-            let result_packed = trace[0].data[vec_row];
+        for poly_coeff in 0..(1 << (POLY_LOG_SIZE - 1)) {
+            for col in [3, 5, 7] {
+                let mut col_gen = logup_gen.new_col();
+                for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+                    // Get the remainder value from the trace (column 3)
+                    let result_packed = trace[poly_coeff * 8 + col].data[vec_row];
 
-            // Create the denominator using the lookup elements
-            let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
+                    // Create the denominator using the lookup elements
+                    let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
 
-            // The numerator is 1 (we want to check that remainder is in the range)
-            let numerator = PackedQM31::one();
+                    // The numerator is 1 (we want to check that remainder is in the range)
+                    let numerator = PackedQM31::one();
 
-            col_gen.write_frac(vec_row, numerator, denom);
+                    col_gen.write_frac(vec_row, numerator, denom);
+                }
+                col_gen.finalize_col();
+            }
         }
-        col_gen.finalize_col();
 
         let (interaction_trace, claimed_sum) = logup_gen.finalize_last();
         (interaction_trace, InteractionClaim { claimed_sum })

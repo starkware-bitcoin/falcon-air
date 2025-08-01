@@ -12,7 +12,7 @@
 //! All operations are performed in the field Z_q where q = 12289, which is compatible
 //! with the Falcon signature scheme requirements.
 
-use crate::{ntts::ntt, zq::*};
+use crate::{POLY_LOG_SIZE, ntts::ntt, zq::*};
 use stwo::{
     core::{
         channel::{Blake2sChannel, Channel},
@@ -199,7 +199,6 @@ impl BigInteractionClaim {
 pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     // Use consistent trace size across all components
     let range_check_log_size = Q.ilog2() + 1;
-    let poly_log_size = 16u32.ilog2();
 
     // Initialize Fiat-Shamir channel and commitment scheme
     let channel = &mut Blake2sChannel::default();
@@ -222,7 +221,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     // Generate and commit to main traces
     let claim = BigClaim {
         ntt: ntt::Claim {
-            log_size: poly_log_size,
+            log_size: POLY_LOG_SIZE,
         },
         range_check: range_check::Claim {
             log_size: range_check_log_size,
@@ -267,7 +266,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
                 &mut tree_span_provider,
                 ntt::Eval {
                     claim: ntt::Claim {
-                        log_size: poly_log_size,
+                        log_size: POLY_LOG_SIZE,
                     },
                     lookup_elements: relations.clone(),
                 },
