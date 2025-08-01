@@ -25,12 +25,13 @@ pub struct SubMod<E: stwo_constraint_framework::EvalAtRow> {
 }
 
 impl<E: stwo_constraint_framework::EvalAtRow> SubMod<E> {
+    pub fn new(a: E::F, b: E::F, borrow: E::F, r: E::F) -> Self {
+        Self { a, b, borrow, r }
+    }
+
     pub fn evaluate(self, lookup_elements: &super::range_check::LookupElements, eval: &mut E) {
-        // this is the constraint for add_mod_12289
-        // a - b = remainder + borrow * Q
         eval.add_constraint(
-            self.a - self.b - self.r.clone()
-                + self.borrow.clone() * E::F::from(M31::from_u32_unchecked(Q)),
+            self.a + self.borrow.clone() * E::F::from(M31(Q)) - self.b - self.r.clone(),
         );
         eval.add_constraint(self.borrow.clone() * (self.borrow - E::F::one()));
 
