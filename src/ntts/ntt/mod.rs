@@ -15,10 +15,15 @@ use stwo::{
 use stwo_constraint_framework::{FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation};
 
 use crate::{
-    POLY_LOG_SIZE,
-    ntts::SQ1,
+    POLY_LOG_SIZE, POLY_SIZE,
+    ntts::{
+        ROOTS, SQ1,
+        ntt::merge::{Merge, MergeNTT},
+    },
     zq::{Q, add::AddMod, mul::MulMod, range_check, sub::SubMod},
 };
+
+pub mod merge;
 
 #[derive(Debug, Clone)]
 pub struct Claim {
@@ -37,11 +42,14 @@ impl Claim {
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<M31>,
     ) {
-        let mut poly = (1..17).collect::<Vec<_>>();
+        let mut poly = (1..POLY_SIZE + 1).collect::<Vec<_>>();
+        // bit reverse the polynomial so it's directly in the correct order for butterfly
         bit_reverse(&mut poly);
+        let bit_reversed_0 = bit_reverse_index(0, self.log_size);
+
         let trace = poly
             .chunks(2)
-            .flat_map(|chunk| {
+            .map(|chunk| {
                 let f0 = chunk[0];
                 let f1 = chunk[1];
                 let f1_times_sq1_quotient = (f1 * SQ1) / Q;
@@ -64,31 +72,79 @@ impl Claim {
                     f0_minus_f1_times_sq1_quotient,
                     f0_minus_f1_times_sq1_remainder,
                 ]
-                .into_iter()
-                .map(M31::from_u32_unchecked)
-                .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
-
-        let domain = CanonicCoset::new(self.log_size).circle_domain();
-        let bit_reversed_0 = bit_reverse_index(0, self.log_size);
-        let trace = trace
-            .into_iter()
-            .map(|val| {
-                let mut col = vec![M31::zero(); 1 << self.log_size];
-                col[bit_reversed_0] = val;
-                col
+        let final_trace = trace
+            .iter()
+            .flat_map(|coeff_row| {
+                coeff_row.iter().map(|value| {
+                    let mut col = vec![M31::zero(); 1 << self.log_size];
+                    col[bit_reversed_0] = M31(*value);
+                    col
+                })
             })
             .collect::<Vec<_>>();
         let mut remainders = vec![];
-        for coeff in 0..(1 << (POLY_LOG_SIZE - 1)) {
+        for poly_coeff in 0..(1 << (POLY_LOG_SIZE - 1)) {
             for col in [3, 5, 7] {
-                remainders.push(trace[coeff * 8 + col].clone());
+                remainders.push(final_trace[poly_coeff * 8 + col].clone());
             }
         }
+        let mut polys = vec![vec![]; POLY_LOG_SIZE as usize];
+        for [_, _, _, _, _, left, _, right] in trace.iter() {
+            polys[0].push(vec![*left, *right]);
+        }
+        for i in 1..POLY_LOG_SIZE as usize {
+            println!("polys[i - 1]: {:?}", polys[i - 1]);
+            for (j, coeffs) in polys[i - 1].clone().chunks_exact(2).enumerate() {
+                let left = &coeffs[0];
+                let right = &coeffs[1];
+                for (coeff_left, coeff_right) in left.iter().zip(right.iter()) {
+                    let root = ROOTS[i][2 * j];
+                    let root_times_f1_quotient = (*coeff_right * root) / Q;
+                    let root_times_f1_remainder = (*coeff_right * root) % Q;
+
+                    let f0_plus_root_times_f1_quotient =
+                        (*coeff_left + root_times_f1_remainder) / Q;
+                    let f0_plus_root_times_f1_remainder =
+                        (*coeff_left + root_times_f1_remainder) % Q;
+
+                    let f0_minus_root_times_f1_borrow =
+                        (*coeff_left < root_times_f1_remainder) as u32;
+                    let f0_minus_root_times_f1_remainder =
+                        (*coeff_left + f0_minus_root_times_f1_borrow * Q - root_times_f1_remainder)
+                            % Q;
+
+                    polys[i].push(vec![
+                        root_times_f1_quotient,
+                        root_times_f1_remainder,
+                        f0_plus_root_times_f1_quotient,
+                        f0_plus_root_times_f1_remainder,
+                        f0_minus_root_times_f1_borrow,
+                        f0_minus_root_times_f1_remainder,
+                    ]);
+                }
+            }
+        }
+        let trace = polys.into_iter().flat_map(|poly| {
+            poly.into_iter().flat_map(|x| {
+                x.into_iter().map(|val| {
+                    let mut col = vec![M31::zero(); 1 << self.log_size];
+                    col[bit_reversed_0] = M31(val);
+                    col
+                })
+            })
+        });
+        let remainders = remainders
+            .into_iter()
+            .chain(trace.clone().skip(1).step_by(2));
+
+        let domain = CanonicCoset::new(self.log_size).circle_domain();
+
         (
-            trace
+            final_trace
                 .into_iter()
+                .chain(trace)
                 .map(|val| {
                     CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
                         domain,
@@ -120,6 +176,7 @@ impl FrameworkEval for Eval {
 
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
         let sq1 = E::F::from(M31::from_u32_unchecked(SQ1));
+        let mut base_f_ntt = Vec::with_capacity(POLY_SIZE as usize);
         for _ in 0..1 << (POLY_LOG_SIZE - 1) {
             let f0 = eval.next_trace_mask();
             let f1 = eval.next_trace_mask();
@@ -144,7 +201,7 @@ impl FrameworkEval for Eval {
                 f0.clone(),
                 f1_times_sq1_remainder.clone(),
                 f0_plus_f1_times_sq1_quotient,
-                f0_plus_f1_times_sq1_remainder,
+                f0_plus_f1_times_sq1_remainder.clone(),
             )
             .evaluate(&self.lookup_elements, &mut eval);
 
@@ -152,9 +209,50 @@ impl FrameworkEval for Eval {
                 f0,
                 f1_times_sq1_remainder,
                 f0_minus_f1_times_sq1_quotient,
-                f0_minus_f1_times_sq1_remainder,
+                f0_minus_f1_times_sq1_remainder.clone(),
             )
             .evaluate(&self.lookup_elements, &mut eval);
+
+            base_f_ntt.push(vec![
+                f0_plus_f1_times_sq1_remainder,
+                f0_minus_f1_times_sq1_remainder,
+            ]);
+        }
+
+        let mut poly: Vec<Vec<Vec<E::F>>> = vec![base_f_ntt];
+
+        for i in 1..POLY_LOG_SIZE as usize {
+            let mut merges = MergeNTT::default();
+            for (j, coeffs) in poly[i - 1].chunks_exact(2).enumerate() {
+                let left = &coeffs[0];
+                let right = &coeffs[1];
+                for (coeff_left, coeff_right) in left.iter().zip(right.iter()) {
+                    let root = ROOTS[i][2 * j];
+                    let root_times_f1 = MulMod::<E>::new(
+                        coeff_right.clone(),
+                        E::F::from(M31(root)),
+                        eval.next_trace_mask(),
+                        eval.next_trace_mask(),
+                    );
+                    let f0_plus_root_times_f1 = AddMod::<E>::new(
+                        coeff_left.clone(),
+                        root_times_f1.r.clone(),
+                        eval.next_trace_mask(),
+                        eval.next_trace_mask(),
+                    );
+                    let f0_minus_root_times_f1 = SubMod::<E>::new(
+                        coeff_left.clone(),
+                        root_times_f1.r.clone(),
+                        eval.next_trace_mask(),
+                        eval.next_trace_mask(),
+                    );
+                    let merge =
+                        Merge::new(root_times_f1, f0_plus_root_times_f1, f0_minus_root_times_f1);
+                    merges.push(merge);
+                }
+            }
+            let merged_poly = MergeNTT::evaluate(merges, &self.lookup_elements, &mut eval);
+            poly[i].push(merged_poly);
         }
 
         eval.finalize_logup();
