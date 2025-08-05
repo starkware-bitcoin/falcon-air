@@ -18,7 +18,7 @@ use stwo::{
         channel::Channel,
         fields::{
             m31::{BaseField, M31},
-            qm31::QM31,
+            qm31::{QM31, SECURE_EXTENSION_DEGREE},
         },
         pcs::TreeVec,
         poly::circle::CanonicCoset,
@@ -88,7 +88,11 @@ impl Claim {
     /// [preprocessed_trace, trace, interaction_trace]
     pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
         let trace_log_sizes = vec![self.log_size];
-        TreeVec::new(vec![vec![Q.ilog2() + 1], trace_log_sizes, vec![]])
+        TreeVec::new(vec![
+            vec![Q.ilog2() + 1],
+            trace_log_sizes,
+            vec![self.log_size; SECURE_EXTENSION_DEGREE],
+        ])
     }
 
     /// Mixes the claim parameters into the Fiat-Shamir channel.
@@ -100,7 +104,7 @@ impl Claim {
     /// The trace contains the multiplicities of each value
     pub fn gen_trace(
         &self,
-        remainders: &[&[M31]],
+        remainders: &[Vec<M31>],
     ) -> CircleEvaluation<SimdBackend, M31, BitReversedOrder> {
         let mut trace = vec![M31::zero(); 1 << self.log_size as usize];
         for col in remainders {
@@ -144,7 +148,7 @@ impl FrameworkEval for Eval {
             &[lookup_col_1],
         ));
 
-        eval.finalize_logup_in_pairs();
+        eval.finalize_logup();
 
         eval
     }

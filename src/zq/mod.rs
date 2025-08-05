@@ -8,6 +8,7 @@
 //! remain within the valid range [0, q).
 
 pub mod add;
+pub mod inverses;
 pub mod mul;
 pub mod range_check;
 pub mod sub;
@@ -17,3 +18,9 @@ pub mod sub;
 /// This value (12 * 1024 + 1 = 12289) is chosen to be compatible with
 /// the Falcon signature scheme requirements.
 pub const Q: u32 = 12 * 1024 + 1;
+
+pub enum Operation<E: stwo_constraint_framework::EvalAtRow> {
+    Add(add::AddMod<E>),
+    Sub(sub::SubMod<E>),
+    Mul(mul::MulMod<E>),
+}
