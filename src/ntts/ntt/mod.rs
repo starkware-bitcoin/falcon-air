@@ -40,7 +40,7 @@ impl Claim {
         &self,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
-        Vec<M31>,
+        Vec<Vec<M31>>,
     ) {
         let mut poly = (1..POLY_SIZE + 1).collect::<Vec<_>>();
         // bit reverse the polynomial so it's directly in the correct order for butterfly
@@ -94,46 +94,47 @@ impl Claim {
         for [_, _, _, _, _, left, _, right] in trace.iter() {
             polys[0].push(vec![*left, *right]);
         }
+        let mut trace = vec![];
+
         for i in 1..POLY_LOG_SIZE as usize {
-            println!("polys[i - 1]: {:?}", polys[i - 1]);
-            for (j, coeffs) in polys[i - 1].clone().chunks_exact(2).enumerate() {
+            for coeffs in polys[i - 1].clone().chunks_exact(2) {
                 let left = &coeffs[0];
                 let right = &coeffs[1];
-                for (coeff_left, coeff_right) in left.iter().zip(right.iter()) {
+                let mut merged_poly = vec![];
+                for (j, (coeff_left, coeff_right)) in left.iter().zip(right.iter()).enumerate() {
                     let root = ROOTS[i][2 * j];
                     let root_times_f1_quotient = (*coeff_right * root) / Q;
                     let root_times_f1_remainder = (*coeff_right * root) % Q;
+
+                    trace.push(root_times_f1_quotient);
+                    trace.push(root_times_f1_remainder);
 
                     let f0_plus_root_times_f1_quotient =
                         (*coeff_left + root_times_f1_remainder) / Q;
                     let f0_plus_root_times_f1_remainder =
                         (*coeff_left + root_times_f1_remainder) % Q;
 
+                    trace.push(f0_plus_root_times_f1_quotient);
+                    trace.push(f0_plus_root_times_f1_remainder);
+
                     let f0_minus_root_times_f1_borrow =
                         (*coeff_left < root_times_f1_remainder) as u32;
                     let f0_minus_root_times_f1_remainder =
                         (*coeff_left + f0_minus_root_times_f1_borrow * Q - root_times_f1_remainder)
                             % Q;
+                    trace.push(f0_minus_root_times_f1_borrow);
+                    trace.push(f0_minus_root_times_f1_remainder);
 
-                    polys[i].push(vec![
-                        root_times_f1_quotient,
-                        root_times_f1_remainder,
-                        f0_plus_root_times_f1_quotient,
-                        f0_plus_root_times_f1_remainder,
-                        f0_minus_root_times_f1_borrow,
-                        f0_minus_root_times_f1_remainder,
-                    ]);
+                    merged_poly.push(f0_plus_root_times_f1_remainder);
+                    merged_poly.push(f0_minus_root_times_f1_remainder);
                 }
+                polys[i].push(merged_poly);
             }
         }
-        let trace = polys.into_iter().flat_map(|poly| {
-            poly.into_iter().flat_map(|x| {
-                x.into_iter().map(|val| {
-                    let mut col = vec![M31::zero(); 1 << self.log_size];
-                    col[bit_reversed_0] = M31(val);
-                    col
-                })
-            })
+        let trace = trace.into_iter().map(|val| {
+            let mut col = vec![M31::zero(); 1 << self.log_size];
+            col[bit_reversed_0] = M31(val);
+            col
         });
         let remainders = remainders
             .into_iter()
@@ -152,7 +153,7 @@ impl Claim {
                     )
                 })
                 .collect::<Vec<_>>(),
-            remainders.into_iter().flatten().collect(),
+            remainders.collect(),
         )
     }
 }
@@ -219,14 +220,15 @@ impl FrameworkEval for Eval {
             ]);
         }
 
-        let mut poly: Vec<Vec<Vec<E::F>>> = vec![base_f_ntt];
+        let mut poly: Vec<Vec<Vec<E::F>>> = vec![vec![]; POLY_LOG_SIZE as usize];
+        poly[0] = base_f_ntt;
 
         for i in 1..POLY_LOG_SIZE as usize {
-            let mut merges = MergeNTT::default();
-            for (j, coeffs) in poly[i - 1].chunks_exact(2).enumerate() {
+            for coeffs in poly[i - 1].clone().chunks_exact(2) {
+                let mut merges = MergeNTT::default();
                 let left = &coeffs[0];
                 let right = &coeffs[1];
-                for (coeff_left, coeff_right) in left.iter().zip(right.iter()) {
+                for (j, (coeff_left, coeff_right)) in left.iter().zip(right.iter()).enumerate() {
                     let root = ROOTS[i][2 * j];
                     let root_times_f1 = MulMod::<E>::new(
                         coeff_right.clone(),
@@ -250,9 +252,9 @@ impl FrameworkEval for Eval {
                         Merge::new(root_times_f1, f0_plus_root_times_f1, f0_minus_root_times_f1);
                     merges.push(merge);
                 }
+                let merged_poly = MergeNTT::evaluate(merges, &self.lookup_elements, &mut eval);
+                poly[i].push(merged_poly);
             }
-            let merged_poly = MergeNTT::evaluate(merges, &self.lookup_elements, &mut eval);
-            poly[i].push(merged_poly);
         }
 
         eval.finalize_logup();
@@ -295,18 +297,39 @@ impl InteractionClaim {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
 
-        for poly_coeff in 0..(1 << (POLY_LOG_SIZE - 1)) {
+        // Interaction trace for the remainder
+        let first_ntt_size = 1 << (POLY_LOG_SIZE - 1);
+        for operation_elemnt_index in 0..first_ntt_size {
             for col in [3, 5, 7] {
                 let mut col_gen = logup_gen.new_col();
                 for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-                    // only the packed row that contains the hot lane contributes
-                    let result_packed = trace[poly_coeff * 8 + col].data[vec_row];
-                    // denom per-lane from the actual packed remainder
+                    // in the first part of the trace each element is 8 columns wide
+                    let result_packed = trace[operation_elemnt_index * 8 + col].data[vec_row];
+
+                    // Create the denominator using the lookup elements
                     let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
                     col_gen.write_frac(vec_row, PackedQM31::one(), denom);
                 }
                 col_gen.finalize_col();
             }
+        }
+
+        let offset = first_ntt_size * 8 + 1;
+        for col in (offset..trace.len()).step_by(2) {
+            let mut col_gen = logup_gen.new_col();
+            for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+                // in the first part of the trace each element is 8 columns wide
+                let result_packed = trace[col].data[vec_row];
+
+                // Create the denominator using the lookup elements
+                let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
+
+                // The numerator is 1 (we want to check that remainder is in the range)
+                let numerator = PackedQM31::one();
+
+                col_gen.write_frac(vec_row, numerator, denom);
+            }
+            col_gen.finalize_col();
         }
 
         let (interaction_trace, claimed_sum) = logup_gen.finalize_last();

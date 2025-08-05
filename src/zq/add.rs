@@ -15,6 +15,8 @@ use stwo_constraint_framework::RelationEntry;
 
 use crate::zq::Q;
 
+pub const ADD_COL: usize = 0;
+
 #[derive(Debug, Clone)]
 pub struct AddMod<E: stwo_constraint_framework::EvalAtRow> {
     pub a: E::F,
