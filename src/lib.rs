@@ -16,5 +16,5 @@ pub mod big_air;
 pub mod ntts;
 pub mod zq;
 
-pub const POLY_LOG_SIZE: u32 = 4;
+pub const POLY_LOG_SIZE: u32 = 5;
 pub const POLY_SIZE: u32 = 1 << POLY_LOG_SIZE;

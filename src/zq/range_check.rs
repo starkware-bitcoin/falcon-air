@@ -104,7 +104,7 @@ impl Claim {
     /// The trace contains the multiplicities of each value
     pub fn gen_trace(
         &self,
-        remainders: &[&[M31]],
+        remainders: &[Vec<M31>],
     ) -> CircleEvaluation<SimdBackend, M31, BitReversedOrder> {
         let mut trace = vec![M31::zero(); 1 << self.log_size as usize];
         for col in remainders {
@@ -148,7 +148,7 @@ impl FrameworkEval for Eval {
             &[lookup_col_1],
         ));
 
-        eval.finalize_logup_in_pairs();
+        eval.finalize_logup();
 
         eval
     }

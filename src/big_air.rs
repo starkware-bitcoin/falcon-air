@@ -100,7 +100,7 @@ impl BigClaim {
         AllTraces,
     ) {
         let (ntt_trace, ntt_remainders) = self.ntt.gen_trace();
-        let range_check_trace = self.range_check.gen_trace(&[&ntt_remainders]);
+        let range_check_trace = self.range_check.gen_trace(&ntt_remainders);
         (
             ntt_trace
                 .clone()
