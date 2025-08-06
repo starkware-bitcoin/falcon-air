@@ -12,7 +12,12 @@
 //! All operations are performed in the field Z_q where q = 12289, which is compatible
 //! with the Falcon signature scheme requirements.
 
-use crate::{POLY_LOG_SIZE, ntts::ntt, zq::*};
+use crate::{
+    POLY_LOG_SIZE,
+    ntts::{intt, ntt},
+    zq::*,
+};
+use itertools::Itertools;
 use stwo::{
     core::{
         channel::{Blake2sChannel, Channel},
@@ -38,6 +43,8 @@ use stwo_constraint_framework::TraceLocationAllocator;
 pub struct BigClaim {
     /// Claim for NTT operations
     pub ntt: ntt::Claim,
+    /// Claim for INTT operations
+    pub intt: intt::Claim,
     /// Claim for range checking operations
     pub range_check: range_check::Claim,
 }
@@ -46,6 +53,8 @@ pub struct BigClaim {
 pub struct AllTraces {
     /// Trace columns from NTT operations
     ntt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+    /// Trace columns from INTT operations
+    intt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace column from range checking: multiplicities
     range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
 }
@@ -54,9 +63,14 @@ impl AllTraces {
     /// Creates a new AllTraces instance with the provided traces.
     pub fn new(
         ntt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+        intt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     ) -> Self {
-        Self { ntt, range_check }
+        Self {
+            ntt,
+            intt,
+            range_check,
+        }
     }
 }
 
@@ -66,7 +80,11 @@ impl BigClaim {
     /// Concatenates the log sizes from all four components to determine
     /// the total trace structure.
     pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
-        let trees = vec![self.ntt.log_sizes(), self.range_check.log_sizes()];
+        let trees = vec![
+            self.ntt.log_sizes(),
+            self.intt.log_sizes(),
+            self.range_check.log_sizes(),
+        ];
         TreeVec::concat_cols(trees.into_iter())
     }
 
@@ -76,6 +94,7 @@ impl BigClaim {
     /// contribute to the randomness.
     pub fn mix_into(&self, channel: &mut impl Channel) {
         self.ntt.mix_into(channel);
+        self.intt.mix_into(channel);
         self.range_check.mix_into(channel);
     }
 
@@ -100,14 +119,21 @@ impl BigClaim {
         AllTraces,
     ) {
         let (ntt_trace, ntt_remainders) = self.ntt.gen_trace();
-        let range_check_trace = self.range_check.gen_trace(&ntt_remainders);
+        let (intt_trace, intt_remainders) = self.intt.gen_trace();
+        let range_check_trace = self.range_check.gen_trace(
+            &ntt_remainders
+                .into_iter()
+                .chain(intt_remainders)
+                .collect_vec(),
+        );
         (
             ntt_trace
                 .clone()
                 .into_iter()
+                .chain(intt_trace.clone())
                 .chain([range_check_trace.clone()])
                 .collect::<Vec<_>>(),
-            AllTraces::new(ntt_trace, range_check_trace),
+            AllTraces::new(ntt_trace, intt_trace, range_check_trace),
         )
     }
 }
@@ -116,6 +142,8 @@ impl BigClaim {
 pub struct BigInteractionClaim {
     /// Interaction claim for NTT operations
     pub ntt: ntt::InteractionClaim,
+    /// Interaction claim for INTT operations
+    pub intt: intt::InteractionClaim,
     /// Interaction claim for range checking
     pub range_check: range_check::InteractionClaim,
 }
@@ -124,6 +152,7 @@ impl BigInteractionClaim {
     /// Mixes all interaction claims into the Fiat-Shamir channel.
     pub fn mix_into(&self, channel: &mut impl Channel) {
         self.ntt.mix_into(channel);
+        self.intt.mix_into(channel);
         self.range_check.mix_into(channel);
     }
 
@@ -132,7 +161,7 @@ impl BigInteractionClaim {
     /// This sum should equal zero for a valid proof, ensuring that
     /// all lookup relations are properly satisfied.
     pub fn claimed_sum(&self) -> QM31 {
-        self.ntt.claimed_sum + self.range_check.claimed_sum
+        self.ntt.claimed_sum + self.intt.claimed_sum + self.range_check.claimed_sum
     }
 
     /// Generates interaction traces for all components.
@@ -151,6 +180,7 @@ impl BigInteractionClaim {
     pub fn gen_interaction_trace(
         lookup_elements: &range_check::LookupElements,
         ntt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
+        intt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         range_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     ) -> (
         Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
@@ -158,6 +188,8 @@ impl BigInteractionClaim {
     ) {
         let (ntt_interaction_trace, ntt_interaction_claim) =
             ntt::InteractionClaim::gen_interaction_trace(ntt_trace, lookup_elements);
+        let (intt_interaction_trace, intt_interaction_claim) =
+            intt::InteractionClaim::gen_interaction_trace(intt_trace, lookup_elements);
         let (range_check_interaction_trace, range_check_interaction_claim) =
             range_check::InteractionClaim::gen_interaction_trace(
                 range_check_trace,
@@ -166,10 +198,12 @@ impl BigInteractionClaim {
         (
             ntt_interaction_trace
                 .into_iter()
+                .chain(intt_interaction_trace)
                 .chain(range_check_interaction_trace)
                 .collect(),
             Self {
                 ntt: ntt_interaction_claim,
+                intt: intt_interaction_claim,
                 range_check: range_check_interaction_claim,
             },
         )
@@ -223,6 +257,9 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
         ntt: ntt::Claim {
             log_size: POLY_LOG_SIZE,
         },
+        intt: intt::Claim {
+            log_size: POLY_LOG_SIZE,
+        },
         range_check: range_check::Claim {
             log_size: range_check_log_size,
         },
@@ -241,8 +278,12 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     let relations = range_check::LookupElements::draw(channel);
 
     // Generate and commit to interaction traces
-    let (interaction_trace, interaction_claim) =
-        BigInteractionClaim::gen_interaction_trace(&relations, &traces.ntt, &traces.range_check);
+    let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
+        &relations,
+        &traces.ntt,
+        &traces.intt,
+        &traces.range_check,
+    );
     interaction_claim.mix_into(channel);
 
     let mut tree_builder = commitment_scheme.tree_builder();
@@ -266,6 +307,16 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
                     lookup_elements: relations.clone(),
                 },
                 interaction_claim.ntt.claimed_sum,
+            ),
+            &intt::Component::new(
+                &mut tree_span_provider,
+                intt::Eval {
+                    claim: intt::Claim {
+                        log_size: POLY_LOG_SIZE,
+                    },
+                    lookup_elements: relations.clone(),
+                },
+                interaction_claim.intt.claimed_sum,
             ),
             &range_check::Component::new(
                 &mut tree_span_provider,
