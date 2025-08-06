@@ -1,3 +1,23 @@
+//! Number Theoretic Transform (NTT) implementation for polynomial evaluation.
+//!
+//! This module implements a complete NTT circuit that performs polynomial evaluation
+//! over a finite field using modular arithmetic operations. The NTT is a generalization
+//! of the Fast Fourier Transform (FFT) that works over finite fields.
+//!
+//! The NTT algorithm works by:
+//! 1. **Initial Butterfly Phase**: Performs the first level of NTT computation
+//! 2. **Recursive Merging Phase**: Combines intermediate results using roots of unity
+//! 3. **Final Evaluation**: Produces the polynomial in evaluation form
+//!
+//! Key characteristics:
+//! - Uses roots of unity for polynomial evaluation
+//! - Input is in coefficient form, output is in evaluation form
+//! - Each arithmetic operation is decomposed for modular arithmetic verification
+//! - Includes range checking to ensure values remain within field bounds
+//!
+//! The NTT is the forward transform that converts from coefficient form to evaluation form,
+//! which is the inverse of the INTT (Inverse Number Theoretic Transform).
+
 use num_traits::{One, Zero};
 use stwo::{
     core::{
@@ -62,9 +82,16 @@ impl Claim {
     /// Generates the complete NTT computation trace.
     ///
     /// This function creates a trace that represents the entire NTT computation,
-    /// including both the initial butterfly phase and the merging phase. Each
+    /// including the initial butterfly phase and the recursive merging phase. Each
     /// arithmetic operation is decomposed into quotient and remainder parts for
     /// modular arithmetic verification.
+    ///
+    /// The NTT algorithm:
+    /// 1. Starts with polynomial in coefficient form [1, 2, ..., n]
+    /// 2. Applies bit-reversal permutation for in-place computation
+    /// 3. Performs initial butterfly operations using SQ1
+    /// 4. Recursively merges results using roots of unity
+    /// 5. Produces polynomial in evaluation form
     ///
     /// # Returns
     ///
@@ -105,16 +132,24 @@ impl Claim {
             .map(|chunk| {
                 let f0 = chunk[0];
                 let f1 = chunk[1];
+
+                // Step 1: Multiply f1 by SQ1 (first root of unity) and decompose
+                // f1 * SQ1 = quotient * Q + remainder
                 let f1_times_sq1_quotient = (f1 * SQ1) / Q;
                 let f1_times_sq1_remainder = (f1 * SQ1) % Q;
 
+                // Step 2: Add f0 to the remainder and decompose
+                // f0 + f1 * SQ1 = quotient * Q + remainder
                 let f0_plus_f1_times_sq1_quotient = (f0 + f1_times_sq1_remainder) / Q;
                 let f0_plus_f1_times_sq1_remainder = (f0 + f1_times_sq1_remainder) % Q;
 
+                // Step 3: Subtract the remainder from f0 and decompose
+                // f0 - f1 * SQ1 = quotient * Q + remainder (with borrow handling)
                 let f0_minus_f1_times_sq1_quotient = (f0 < f1_times_sq1_remainder) as u32;
                 let f0_minus_f1_times_sq1_remainder =
                     (f0 + f0_minus_f1_times_sq1_quotient * Q - f1_times_sq1_remainder) % Q;
 
+                // Store remainders for range checking
                 remainders[MUL_COL].push(f1_times_sq1_remainder);
                 remainders[ADD_COL].push(f0_plus_f1_times_sq1_remainder);
                 remainders[SUB_COL].push(f0_minus_f1_times_sq1_remainder);
@@ -144,9 +179,9 @@ impl Claim {
         // Flatten the trace array for easier column-wise access
         let mut trace = trace.into_flattened();
 
-        // Phase 2: Merging Operations
+        // Phase 2: Recursive Merging Operations
         //
-        // This phase implements the remaining NTT levels using merging operations:
+        // This phase implements the remaining NTT levels using recursive merging:
         //   f_ntt[2 * i + 0] = (f0_ntt[i] + w[2 * i] * f1_ntt[i]) % q
         //   f_ntt[2 * i + 1] = (f0_ntt[i] - w[2 * i] * f1_ntt[i]) % q
         //
@@ -156,6 +191,7 @@ impl Claim {
         // - f0_ntt[i] - f1_ntt[i] * w[2 * i] / Q, f0_ntt[i] - f1_ntt[i] * w[2 * i] % Q: Subtraction
         //
         // The roots of unity (w[2 * i]) are precomputed and stored in ROOTS[i][2 * j]
+        // Each level doubles the polynomial size until we reach the final evaluation form
         for i in 1..POLY_LOG_SIZE as usize {
             for coeffs in polys[i - 1].clone().chunks_exact(2) {
                 let left = &coeffs[0]; // f0_ntt polynomial
@@ -165,9 +201,11 @@ impl Claim {
                 let mut merged_poly = vec![];
                 for (j, (coeff_left, coeff_right)) in left.iter().zip(right.iter()).enumerate() {
                     // Get the appropriate root of unity for this position
+                    // Each level uses different roots from the precomputed ROOTS array
                     let root = ROOTS[i][2 * j];
 
                     // Step 1: Multiply f1_ntt coefficient by root of unity
+                    // f1_ntt[i] * w[2 * i] = quotient * Q + remainder
                     let root_times_f1_quotient = (*coeff_right * root) / Q;
                     let root_times_f1_remainder = (*coeff_right * root) % Q;
 
@@ -176,6 +214,7 @@ impl Claim {
                     remainders[MUL_COL].push(root_times_f1_remainder);
 
                     // Step 2: Add f0_ntt coefficient to the multiplied result
+                    // f0_ntt[i] + f1_ntt[i] * w[2 * i] = quotient * Q + remainder
                     let f0_plus_root_times_f1_quotient =
                         (*coeff_left + root_times_f1_remainder) / Q;
                     let f0_plus_root_times_f1_remainder =
@@ -186,7 +225,7 @@ impl Claim {
                     remainders[ADD_COL].push(f0_plus_root_times_f1_remainder);
 
                     // Step 3: Subtract the multiplied result from f0_ntt coefficient
-                    // Handle potential underflow with borrow bit
+                    // f0_ntt[i] - f1_ntt[i] * w[2 * i] = quotient * Q + remainder (with borrow handling)
                     let f0_minus_root_times_f1_borrow =
                         (*coeff_left < root_times_f1_remainder) as u32;
                     let f0_minus_root_times_f1_remainder =
@@ -196,7 +235,7 @@ impl Claim {
                     trace.push(f0_minus_root_times_f1_remainder);
                     remainders[SUB_COL].push(f0_minus_root_times_f1_remainder);
 
-                    // Store the results for the next iteration
+                    // Store the results for the next recursive level
                     merged_poly.push(f0_plus_root_times_f1_remainder);
                     merged_poly.push(f0_minus_root_times_f1_remainder);
                 }
@@ -239,6 +278,10 @@ impl Claim {
 /// This struct contains the necessary data to evaluate the NTT constraints
 /// during proof generation, including the claim parameters and lookup elements
 /// for range checking of modular arithmetic operations.
+///
+/// The evaluation component ensures that all NTT operations (multiplication,
+/// addition, subtraction) are correctly verified through range checking
+/// and modular arithmetic constraints.
 #[derive(Debug, Clone)]
 pub struct Eval {
     /// The claim parameters defining the NTT computation
@@ -263,6 +306,11 @@ impl FrameworkEval for Eval {
     /// This function generates the constraint evaluation trace that matches
     /// the computation trace generated by `gen_trace`. It ensures that all
     /// modular arithmetic operations are correctly verified through range checking.
+    ///
+    /// The evaluation process mirrors the NTT computation:
+    /// 1. Evaluates initial butterfly operations using SQ1
+    /// 2. Evaluates recursive merging operations using roots of unity
+    /// 3. Verifies all modular arithmetic operations through range checking
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
         let sq1 = E::F::from(M31::from_u32_unchecked(SQ1));
         let mut base_f_ntt = Vec::with_capacity(POLY_SIZE as usize);
@@ -375,6 +423,9 @@ impl FrameworkEval for Eval {
 /// with the range checking component through the lookup protocol. The interaction
 /// ensures that all modular arithmetic operations produce results within the
 /// expected range.
+///
+/// The interaction trace verifies that all remainders from modular operations
+/// (multiplication, addition, subtraction) are properly bounded within the field.
 #[derive(Debug, Clone)]
 pub struct InteractionClaim {
     /// The claimed sum for the interaction between NTT and range checking
@@ -387,14 +438,20 @@ impl InteractionClaim {
         channel.mix_felts(&[self.claimed_sum]);
     }
 
-    /// Generates the interaction trace for modular addition.
+    /// Generates the interaction trace that connects NTT computation with range checking.
     ///
-    /// This method creates the interaction trace that connects the addition component
-    /// with the range check component through the lookup protocol.
+    /// This method creates an interaction trace that ensures all modular arithmetic
+    /// operations in the NTT computation produce results within the expected range.
+    /// It uses the lookup protocol to verify that remainders from modular operations
+    /// are properly bounded.
+    ///
+    /// The interaction trace covers:
+    /// - Remainder values from the initial butterfly phase (columns 3, 5, 7)
+    /// - Remainder values from the recursive merging phase (every other column after the initial phase)
     ///
     /// # Parameters
     ///
-    /// - `trace`: The trace columns from the addition component
+    /// - `trace`: The main NTT computation trace columns
     /// - `lookup_elements`: The lookup elements for range checking
     ///
     /// # Returns
@@ -461,4 +518,7 @@ impl InteractionClaim {
 ///
 /// This represents the complete NTT circuit that can be used within
 /// the constraint framework for proof generation and verification.
+///
+/// The NTT component performs polynomial evaluation from coefficient form
+/// to evaluation form using modular arithmetic operations with range checking.
 pub type Component = FrameworkComponent<Eval>;
