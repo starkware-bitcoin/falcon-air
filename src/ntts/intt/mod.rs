@@ -1,3 +1,22 @@
+//! Inverse Number Theoretic Transform (INTT) implementation for polynomial interpolation.
+//!
+//! This module implements a complete INTT circuit that performs polynomial interpolation
+//! over a finite field using modular arithmetic operations. The INTT is the inverse of
+//! the NTT and converts from evaluation form back to coefficient form.
+//!
+//! The INTT algorithm works by:
+//! 1. **Splitting Phase**: Decomposes the polynomial into smaller subproblems
+//! 2. **Recursive Computation**: Applies INTT to each subproblem
+//! 3. **Combining Phase**: Merges results using inverse roots of unity
+//!
+//! Key differences from NTT:
+//! - Uses inverse roots of unity (INVERSES_MOD_Q)
+//! - Includes scaling factor I2 (1/2) at each level
+//! - Input is in evaluation form, output is in coefficient form
+//!
+//! Each phase uses modular arithmetic operations (multiplication, addition, subtraction)
+//! with range checking to ensure correctness within the field bounds.
+
 use num_traits::{One, Zero};
 use stwo::{
     core::{
@@ -40,7 +59,7 @@ impl Claim {
     ///
     /// Returns a tree structure containing the log sizes for:
     /// - `preprocessed_trace`: Empty (no preprocessing needed)
-    /// - `trace`: Main NTT computation trace
+    /// - `trace`: Main INTT computation trace
     /// - `interaction_trace`: Range checking interaction trace
     pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
         let trace_log_sizes = vec![self.log_size];
@@ -53,12 +72,18 @@ impl Claim {
         channel.mix_u64(self.log_size as u64);
     }
 
-    /// Generates the complete NTT computation trace.
+    /// Generates the complete INTT computation trace.
     ///
-    /// This function creates a trace that represents the entire NTT computation,
-    /// including both the initial butterfly phase and the merging phase. Each
+    /// This function creates a trace that represents the entire INTT computation,
+    /// including the splitting phase and recursive combination phase. Each
     /// arithmetic operation is decomposed into quotient and remainder parts for
     /// modular arithmetic verification.
+    ///
+    /// The INTT algorithm:
+    /// 1. Starts with polynomial in evaluation form (NTT of [1,2,...,n])
+    /// 2. Splits the polynomial into even and odd coefficients
+    /// 3. Recursively applies INTT to each half
+    /// 4. Combines results using inverse roots of unity and scaling factor I2
     ///
     /// # Returns
     ///
@@ -72,7 +97,8 @@ impl Claim {
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<Vec<M31>>,
     ) {
-        // Initialize the input polynomial with values of ntt(1, 2, ..., POLY_SIZE)
+        // Initialize the input polynomial with NTT evaluation of [1, 2, ..., POLY_SIZE]
+        // This represents the polynomial in evaluation form that we want to convert back to coefficient form
         let poly = vec![vec![
             7388, 8771, 10971, 10757, 3360, 6406, 5808, 11748, 9588, 3828, 11005, 142, 8491, 3940,
             6557, 10897, 5797, 9659, 8048, 9971, 11342, 1232, 4956, 10244, 7743, 10889, 6086, 6991,
@@ -81,33 +107,49 @@ impl Claim {
 
         let mut trace = poly[0].to_vec();
 
-        // Prepare data structures for the merging phase
+        // Prepare data structures for the recursive INTT computation
+        // Each level will contain polynomials of decreasing size
         let mut polys = vec![vec![]; POLY_LOG_SIZE as usize];
         polys[0] = poly;
 
+        // Phase 1: Recursive INTT Computation
+        //
+        // This phase implements the INTT algorithm by recursively splitting and combining polynomials:
+        // 1. Split each polynomial into even and odd coefficients
+        // 2. Apply INTT to each half recursively
+        // 3. Combine results using inverse roots of unity and scaling factor I2
+        //
+        // The INTT butterfly operations:
+        //   f0_ntt[i] = I2 * (f_even[i] + f_odd[i]) % q
+        //   f1_ntt[i] = I2 * (f_even[i] - f_odd[i]) * inv_root[i] % q
+        //
+        // Each operation requires multiple trace columns for modular arithmetic decomposition
         for i in 1..POLY_LOG_SIZE as usize {
             for poly in polys[i - 1].clone() {
                 let mut f0_ntt = vec![];
                 let mut f1_ntt = vec![];
 
+                // Process pairs of coefficients (even, odd) from the polynomial
                 for (j, (f_even, f_odd)) in poly
                     .iter()
                     .step_by(2)
                     .zip(poly.iter().skip(1).step_by(2))
                     .enumerate()
                 {
-                    // Get the appropriate root of unity for this position
-
+                    // Get the appropriate inverse root of unity for this position
+                    // Note: We use regular roots here but will inverse later
                     let root = ROOTS[poly.len().ilog2() as usize - 1][2 * j];
 
-                    // f_ntt[2 * i] + f_ntt[2 * i + 1]
+                    // Step 1: Add even and odd coefficients
+                    // f_even[i] + f_odd[i]
                     let f_even_plus_f_odd_quotient = (*f_even + *f_odd) / Q;
                     let f_even_plus_f_odd_remainder = (*f_even + *f_odd) % Q;
 
                     trace.push(f_even_plus_f_odd_quotient);
                     trace.push(f_even_plus_f_odd_remainder);
 
-                    // (i2 * (f_ntt[2 * i] + f_ntt[2 * i + 1])) % q
+                    // Step 2: Apply scaling factor I2 to the sum
+                    // I2 * (f_even[i] + f_odd[i]) where I2 = inv(2) mod q
                     let i2_times_f_even_plus_f_odd_quotient =
                         (I2 * f_even_plus_f_odd_remainder) / Q;
                     let i2_times_f_even_plus_f_odd_remainder =
@@ -116,14 +158,17 @@ impl Claim {
                     trace.push(i2_times_f_even_plus_f_odd_quotient);
                     trace.push(i2_times_f_even_plus_f_odd_remainder);
 
-                    // f_ntt[2 * i] - f_ntt[2 * i + 1]
+                    // Step 3: Subtract odd from even coefficients
+                    // f_even[i] - f_odd[i] (with borrow handling for modular subtraction)
                     let f_even_minus_f_odd_borrow = (*f_even < *f_odd) as u32;
                     let f_even_minus_f_odd_remainder =
                         (*f_even + f_even_minus_f_odd_borrow * Q - *f_odd) % Q;
 
                     trace.push(f_even_minus_f_odd_borrow);
                     trace.push(f_even_minus_f_odd_remainder);
-                    // i2 * (f_ntt[2 * i] - f_ntt[2 * i + 1])
+
+                    // Step 4: Apply scaling factor I2 to the difference
+                    // I2 * (f_even[i] - f_odd[i])
                     let i2_times_f_even_minus_f_odd_quotient =
                         (I2 * f_even_minus_f_odd_remainder) / Q;
                     let i2_times_f_even_minus_f_odd_remainder =
@@ -132,7 +177,8 @@ impl Claim {
                     trace.push(i2_times_f_even_minus_f_odd_quotient);
                     trace.push(i2_times_f_even_minus_f_odd_remainder);
 
-                    // (i2 * (f_ntt[2 * i] - f_ntt[2 * i + 1]) * inv_mod_q[w[2 * i]]) % q
+                    // Step 5: Multiply by inverse root of unity
+                    // I2 * (f_even[i] - f_odd[i]) * inv_root[i] where inv_root[i] = 1/root[i]
                     let i2_times_f_even_minus_f_odd_times_root_inv_quotient =
                         (i2_times_f_even_minus_f_odd_remainder * INVERSES_MOD_Q[root as usize]) / Q;
                     let i2_times_f_even_minus_f_odd_times_root_inv_remainder =
@@ -141,6 +187,7 @@ impl Claim {
                     trace.push(i2_times_f_even_minus_f_odd_times_root_inv_quotient);
                     trace.push(i2_times_f_even_minus_f_odd_times_root_inv_remainder);
 
+                    // Store the results for the next recursive level
                     f0_ntt.push(i2_times_f_even_plus_f_odd_remainder);
                     f1_ntt.push(i2_times_f_even_minus_f_odd_times_root_inv_remainder);
                 }
@@ -148,18 +195,31 @@ impl Claim {
                 polys[i].push(f1_ntt);
             }
         }
+
+        // Phase 2: Final INTT Combination
+        //
+        // This phase performs the final INTT butterfly operation on the last two coefficients:
+        // 1. Add the two remaining coefficients
+        // 2. Apply scaling factor I2
+        // 3. Subtract the coefficients
+        // 4. Apply scaling factor I2 and inverse of SQ1
+        //
+        // This completes the INTT and produces the final coefficient form result
         let mut debug_result = vec![];
 
         for poly in polys.iter().last().unwrap() {
             debug_assert!(poly.len() == 2);
-            // (f_ntt[0] + f_ntt[1])
+
+            // Step 1: Add the final two coefficients
+            // f_ntt[0] + f_ntt[1]
             let f_ntt_0_plus_f_ntt_1_quotient = (poly[0] + poly[1]) / Q;
             let f_ntt_0_plus_f_ntt_1_remainder = (poly[0] + poly[1]) % Q;
 
             trace.push(f_ntt_0_plus_f_ntt_1_quotient);
             trace.push(f_ntt_0_plus_f_ntt_1_remainder);
 
-            // (i2 * (f_ntt[0] + f_ntt[1])) % q
+            // Step 2: Apply scaling factor I2 to the sum
+            // I2 * (f_ntt[0] + f_ntt[1]) where I2 = 1/2
             let i2_times_f_ntt_0_plus_f_ntt_1_quotient = (I2 * f_ntt_0_plus_f_ntt_1_remainder) / Q;
             let i2_times_f_ntt_0_plus_f_ntt_1_remainder = (I2 * f_ntt_0_plus_f_ntt_1_remainder) % Q;
             debug_result.push(i2_times_f_ntt_0_plus_f_ntt_1_remainder);
@@ -167,7 +227,8 @@ impl Claim {
             trace.push(i2_times_f_ntt_0_plus_f_ntt_1_quotient);
             trace.push(i2_times_f_ntt_0_plus_f_ntt_1_remainder);
 
-            // f_ntt[0] - f_ntt[1]
+            // Step 3: Subtract the final two coefficients
+            // f_ntt[0] - f_ntt[1] (with borrow handling)
             let f_ntt_0_minus_f_ntt_1_quotient = (poly[0] < poly[1]) as u32;
             let f_ntt_0_minus_f_ntt_1_remainder =
                 (poly[0] + f_ntt_0_minus_f_ntt_1_quotient * Q - poly[1]) % Q;
@@ -175,9 +236,11 @@ impl Claim {
             trace.push(f_ntt_0_minus_f_ntt_1_quotient);
             trace.push(f_ntt_0_minus_f_ntt_1_remainder);
 
+            // Step 4: Apply scaling factor I2 and inverse of SQ1 to the difference
+            // I2 * inv_sq1 * (f_ntt[0] - f_ntt[1]) where inv_sq1 = 1/sq1
             let i2_times_inv_sq1 = (I2 * INVERSES_MOD_Q[SQ1 as usize]) % Q;
 
-            // (i2 * inv_mod_q[sqr1] * (f_ntt[0] - f_ntt[1])) % q
+            // I2 * inv_sq1 * (f_ntt[0] - f_ntt[1])
             let i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_quotient =
                 (i2_times_inv_sq1 * f_ntt_0_minus_f_ntt_1_remainder) / Q;
             let i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder =
@@ -222,14 +285,14 @@ impl Claim {
     }
 }
 
-/// Evaluation component for the NTT circuit.
+/// Evaluation component for the INTT circuit.
 ///
-/// This struct contains the necessary data to evaluate the NTT constraints
+/// This struct contains the necessary data to evaluate the INTT constraints
 /// during proof generation, including the claim parameters and lookup elements
 /// for range checking of modular arithmetic operations.
 #[derive(Debug, Clone)]
 pub struct Eval {
-    /// The claim parameters defining the NTT computation
+    /// The claim parameters defining the INTT computation
     pub claim: Claim,
     /// Lookup elements for range checking modular arithmetic operations
     pub lookup_elements: range_check::LookupElements,
@@ -246,7 +309,7 @@ impl FrameworkEval for Eval {
         self.claim.log_size + 1
     }
 
-    /// Evaluates the NTT constraints during proof generation.
+    /// Evaluates the INTT constraints during proof generation.
     ///
     /// This function generates the constraint evaluation trace that matches
     /// the computation trace generated by `gen_trace`. It ensures that all
@@ -375,15 +438,15 @@ impl FrameworkEval for Eval {
     }
 }
 
-/// Claim for the interaction trace that connects NTT computation with range checking.
+/// Claim for the interaction trace that connects INTT computation with range checking.
 ///
-/// This struct contains the claimed sum that links the NTT computation trace
+/// This struct contains the claimed sum that links the INTT computation trace
 /// with the range checking component through the lookup protocol. The interaction
 /// ensures that all modular arithmetic operations produce results within the
 /// expected range.
 #[derive(Debug, Clone)]
 pub struct InteractionClaim {
-    /// The claimed sum for the interaction between NTT and range checking
+    /// The claimed sum for the interaction between INTT and range checking
     pub claimed_sum: SecureField,
 }
 
@@ -393,14 +456,18 @@ impl InteractionClaim {
         channel.mix_felts(&[self.claimed_sum]);
     }
 
-    /// Generates the interaction trace for modular addition.
+    /// Generates the interaction trace that connects INTT computation with range checking.
     ///
-    /// This method creates the interaction trace that connects the addition component
-    /// with the range check component through the lookup protocol.
+    /// This method creates an interaction trace that ensures all modular arithmetic
+    /// operations in the INTT computation produce results within the expected range.
+    /// It uses the lookup protocol to verify that remainders from modular operations
+    /// are properly bounded.
+    ///
+    /// The interaction trace covers remainder values from the INTT computation phases.
     ///
     /// # Parameters
     ///
-    /// - `trace`: The trace columns from the addition component
+    /// - `trace`: The main INTT computation trace columns
     /// - `lookup_elements`: The lookup elements for range checking
     ///
     /// # Returns
@@ -438,8 +505,8 @@ impl InteractionClaim {
     }
 }
 
-/// Type alias for the NTT circuit component.
+/// Type alias for the INTT circuit component.
 ///
-/// This represents the complete NTT circuit that can be used within
+/// This represents the complete INTT circuit that can be used within
 /// the constraint framework for proof generation and verification.
 pub type Component = FrameworkComponent<Eval>;
