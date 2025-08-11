@@ -98,6 +98,7 @@ impl Claim {
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<Vec<M31>>,
+        Vec<u32>,
     ) {
         // Initialize the input polynomial with values [1, 2, ..., POLY_SIZE]
         let mut poly = (1..POLY_SIZE + 1).collect::<Vec<_>>();
@@ -244,6 +245,7 @@ impl Claim {
             col[bit_reversed_0] = M31(val);
             col
         });
+
         let remainders = remainders
             .into_iter()
             .chain(trace.clone().skip(1).step_by(2));
@@ -255,6 +257,11 @@ impl Claim {
             final_trace
                 .into_iter()
                 .chain(trace)
+                .chain(polys.last().unwrap()[0].iter().map(|x| {
+                    let mut col = vec![M31::zero(); 1 << self.log_size];
+                    col[bit_reversed_0] = M31(*x);
+                    col
+                }))
                 .map(|val| {
                     CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
                         domain,
@@ -263,6 +270,7 @@ impl Claim {
                 })
                 .collect::<Vec<_>>(),
             remainders.collect(),
+            polys.last().unwrap()[0].clone(),
         )
     }
 }
@@ -406,6 +414,11 @@ impl FrameworkEval for Eval {
             }
         }
 
+        poly.last().unwrap()[0].clone().into_iter().for_each(|x| {
+            let output_col = eval.next_trace_mask();
+            eval.add_constraint(x - output_col);
+        });
+
         eval.finalize_logup();
         eval
     }
@@ -460,6 +473,7 @@ impl InteractionClaim {
     ) {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
+        let mut values = vec![];
 
         // Phase 1: Interaction trace for the initial butterfly phase
         // Check remainder values from columns 3, 5, 7 of each 8-column group
@@ -473,6 +487,7 @@ impl InteractionClaim {
 
                     // Create the denominator using the lookup elements for range checking
                     let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
+                    values.push(result_packed);
                     col_gen.write_frac(vec_row, PackedQM31::one(), denom);
                 }
                 col_gen.finalize_col();
@@ -482,7 +497,7 @@ impl InteractionClaim {
         // Phase 2: Interaction trace for the merging phase
         // Check remainder values from every other column in the merging phase
         let offset = first_ntt_size * 8 + 1;
-        for col in (offset..trace.len()).step_by(2) {
+        for col in (offset..trace.len() - POLY_SIZE as usize).step_by(2) {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 // Access remainder columns from the merging phase
@@ -490,6 +505,7 @@ impl InteractionClaim {
 
                 // Create the denominator using the lookup elements for range checking
                 let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
+                values.push(result_packed);
 
                 // The numerator is 1 (we want to check that remainder is in the range)
                 let numerator = PackedQM31::one();
@@ -500,6 +516,7 @@ impl InteractionClaim {
         }
 
         let (interaction_trace, claimed_sum) = logup_gen.finalize_last();
+
         (interaction_trace, InteractionClaim { claimed_sum })
     }
 }

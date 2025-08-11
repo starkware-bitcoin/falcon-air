@@ -28,7 +28,7 @@ use stwo::{
         },
         pcs::TreeVec,
         poly::circle::CanonicCoset,
-        utils::bit_reverse_index,
+        utils::{bit_reverse, bit_reverse_index},
     },
     prover::{
         backend::simd::{SimdBackend, column::BaseColumn, m31::LOG_N_LANES, qm31::PackedQM31},
@@ -93,17 +93,14 @@ impl Claim {
     #[allow(clippy::type_complexity)]
     pub fn gen_trace(
         &self,
+        poly: Vec<u32>,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<Vec<M31>>,
     ) {
         // Initialize the input polynomial with NTT evaluation of [1, 2, ..., POLY_SIZE]
         // This represents the polynomial in evaluation form that we want to convert back to coefficient form
-        let poly = vec![vec![
-            7388, 8771, 10971, 10757, 3360, 6406, 5808, 11748, 9588, 3828, 11005, 142, 8491, 3940,
-            6557, 10897, 5797, 9659, 8048, 9971, 11342, 1232, 4956, 10244, 7743, 10889, 6086, 6991,
-            2282, 11556, 5380, 1690,
-        ]];
+        let poly = vec![poly];
 
         let mut trace = poly[0].to_vec();
 
@@ -266,6 +263,16 @@ impl Claim {
             .skip(POLY_SIZE as usize + 1)
             .step_by(2);
 
+        bit_reverse(&mut debug_result);
+        let trace = trace
+            .into_iter()
+            .chain(debug_result.into_iter().map(|val| {
+                let mut col = vec![M31::zero(); 1 << self.log_size];
+                col[bit_reversed_0] = M31(val);
+                col
+            }))
+            .collect::<Vec<_>>();
+
         // Convert the trace values to circle evaluations for the proof system
         let domain = CanonicCoset::new(self.log_size).circle_domain();
 
@@ -380,6 +387,7 @@ impl FrameworkEval for Eval {
                 polys[i].push(f1);
             }
         }
+        let mut output = vec![];
 
         for poly in polys.iter().last().unwrap() {
             debug_assert!(poly.len() == 2);
@@ -402,9 +410,10 @@ impl FrameworkEval for Eval {
                 E::F::from(M31(I2)),
                 f_ntt_0_plus_f_ntt_remainder.clone(),
                 i2_times_f_ntt_0_plus_f_ntt_quotient,
-                i2_times_f_ntt_0_plus_f_ntt_remainder,
+                i2_times_f_ntt_0_plus_f_ntt_remainder.clone(),
             )
             .evaluate(&self.lookup_elements, &mut eval);
+            output.push(i2_times_f_ntt_0_plus_f_ntt_remainder);
 
             // f_ntt[0] - f_ntt[1]
             let f_ntt_0_minus_f_ntt_quotient = eval.next_trace_mask();
@@ -428,10 +437,17 @@ impl FrameworkEval for Eval {
                 f_ntt_0_minus_f_ntt_remainder.clone(),
                 E::F::from(M31(i2_times_inv_sq1)),
                 i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_quotient,
-                i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder,
+                i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder.clone(),
             )
             .evaluate(&self.lookup_elements, &mut eval);
+            output.push(i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder);
         }
+
+        bit_reverse(&mut output);
+        output.into_iter().for_each(|x| {
+            let output_col = eval.next_trace_mask();
+            eval.add_constraint(x - output_col);
+        });
 
         eval.finalize_logup();
         eval
@@ -481,9 +497,14 @@ impl InteractionClaim {
         InteractionClaim,
     ) {
         let log_size = trace[0].domain.log_size();
-        let mut logup_gen = LogupTraceGenerator::new(log_size);
 
-        for col in (POLY_SIZE as usize..trace.len()).skip(1).step_by(2) {
+        let mut logup_gen = LogupTraceGenerator::new(log_size);
+        let mut values = vec![];
+
+        for col in (POLY_SIZE as usize..trace.len() - POLY_SIZE as usize)
+            .skip(1)
+            .step_by(2)
+        {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 // Access remainder columns from the merging phase
@@ -492,6 +513,7 @@ impl InteractionClaim {
                 // Create the denominator using the lookup elements for range checking
                 let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
 
+                values.push(result_packed);
                 // The numerator is 1 (we want to check that remainder is in the range)
                 let numerator = PackedQM31::one();
 

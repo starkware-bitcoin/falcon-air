@@ -118,8 +118,8 @@ impl BigClaim {
         Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         AllTraces,
     ) {
-        let (ntt_trace, ntt_remainders) = self.ntt.gen_trace();
-        let (intt_trace, intt_remainders) = self.intt.gen_trace();
+        let (ntt_trace, ntt_remainders, ntt_output) = self.ntt.gen_trace();
+        let (intt_trace, intt_remainders) = self.intt.gen_trace(ntt_output);
         let range_check_trace = self.range_check.gen_trace(
             &ntt_remainders
                 .into_iter()
@@ -254,12 +254,8 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
 
     // Generate and commit to main traces
     let claim = BigClaim {
-        ntt: ntt::Claim {
-            log_size: POLY_LOG_SIZE,
-        },
-        intt: intt::Claim {
-            log_size: POLY_LOG_SIZE,
-        },
+        ntt: ntt::Claim { log_size: 4 },
+        intt: intt::Claim { log_size: 4 },
         range_check: range_check::Claim {
             log_size: range_check_log_size,
         },
@@ -306,9 +302,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
             &ntt::Component::new(
                 &mut tree_span_provider,
                 ntt::Eval {
-                    claim: ntt::Claim {
-                        log_size: POLY_LOG_SIZE,
-                    },
+                    claim: ntt::Claim { log_size: 4 },
                     lookup_elements: relations.clone(),
                 },
                 interaction_claim.ntt.claimed_sum,
@@ -316,9 +310,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
             &intt::Component::new(
                 &mut tree_span_provider,
                 intt::Eval {
-                    claim: intt::Claim {
-                        log_size: POLY_LOG_SIZE,
-                    },
+                    claim: intt::Claim { log_size: 4 },
                     lookup_elements: relations.clone(),
                 },
                 interaction_claim.intt.claimed_sum,
