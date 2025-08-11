@@ -36,7 +36,9 @@ use stwo::{
         poly::{BitReversedOrder, circle::CircleEvaluation},
     },
 };
-use stwo_constraint_framework::{FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation};
+use stwo_constraint_framework::{
+    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, relation,
+};
 
 use crate::{
     POLY_LOG_SIZE, POLY_SIZE,
@@ -54,6 +56,8 @@ use crate::{
 };
 
 pub mod merge;
+
+relation!(LookupElements, POLY_SIZE);
 
 #[derive(Debug, Clone)]
 pub struct Claim {
@@ -107,7 +111,7 @@ impl Claim {
         Vec<u32>,
     ) {
         // Initialize the input polynomial with values [1, 2, ..., POLY_SIZE]
-        let mut poly = (1..POLY_SIZE + 1).collect::<Vec<_>>();
+        let mut poly = (1..POLY_SIZE as u32 + 1).collect::<Vec<_>>();
 
         // Apply bit-reversal permutation to prepare for in-place NTT computation
         // This ensures the polynomial is in the correct order for the butterfly operations
@@ -294,7 +298,9 @@ pub struct Eval {
     /// The claim parameters defining the NTT computation
     pub claim: Claim,
     /// Lookup elements for range checking modular arithmetic operations
-    pub lookup_elements: range_check::LookupElements,
+    pub rc_lookup_elements: range_check::LookupElements,
+    /// Lookup elements for NTT operations
+    pub ntt_lookup_elements: LookupElements,
 }
 
 impl FrameworkEval for Eval {
@@ -320,7 +326,7 @@ impl FrameworkEval for Eval {
     /// 3. Verifies all modular arithmetic operations through range checking
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
         let sq1 = E::F::from(M31::from_u32_unchecked(SQ1));
-        let mut base_f_ntt = Vec::with_capacity(POLY_SIZE as usize);
+        let mut base_f_ntt = Vec::with_capacity(POLY_SIZE);
 
         // Phase 1: Evaluate initial butterfly operations
         // This corresponds to the first phase of trace generation
@@ -342,7 +348,7 @@ impl FrameworkEval for Eval {
                 f1_times_sq1_quotient.clone(),
                 f1_times_sq1_remainder.clone(),
             )
-            .evaluate(&self.lookup_elements, &mut eval);
+            .evaluate(&self.rc_lookup_elements, &mut eval);
 
             AddMod::new(
                 f0.clone(),
@@ -350,7 +356,7 @@ impl FrameworkEval for Eval {
                 f0_plus_f1_times_sq1_quotient,
                 f0_plus_f1_times_sq1_remainder.clone(),
             )
-            .evaluate(&self.lookup_elements, &mut eval);
+            .evaluate(&self.rc_lookup_elements, &mut eval);
 
             SubMod::new(
                 f0,
@@ -358,7 +364,7 @@ impl FrameworkEval for Eval {
                 f0_minus_f1_times_sq1_quotient,
                 f0_minus_f1_times_sq1_remainder.clone(),
             )
-            .evaluate(&self.lookup_elements, &mut eval);
+            .evaluate(&self.rc_lookup_elements, &mut eval);
 
             base_f_ntt.push(vec![
                 f0_plus_f1_times_sq1_remainder,
@@ -414,7 +420,7 @@ impl FrameworkEval for Eval {
                 }
 
                 // Evaluate the merge operations and store the result
-                let merged_poly = MergeNTT::evaluate(merges, &self.lookup_elements, &mut eval);
+                let merged_poly = MergeNTT::evaluate(merges, &self.rc_lookup_elements, &mut eval);
                 poly[i].push(merged_poly);
             }
         }
@@ -504,7 +510,7 @@ impl InteractionClaim {
         // Phase 2: Interaction trace for the merging phase
         // Check remainder values from every other column in the merging phase
         let offset = first_ntt_size * 8 + 1;
-        for col in (offset..trace.len() - POLY_SIZE as usize).step_by(2) {
+        for col in (offset..trace.len() - POLY_SIZE).step_by(2) {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 // Access remainder columns from the merging phase
