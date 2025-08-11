@@ -104,13 +104,11 @@ impl Claim {
     /// The trace contains the multiplicities of each value
     pub fn gen_trace(
         &self,
-        remainders: &[Vec<M31>],
+        remainders: &[M31],
     ) -> CircleEvaluation<SimdBackend, M31, BitReversedOrder> {
         let mut trace = vec![M31::zero(); 1 << self.log_size as usize];
-        for col in remainders {
-            for remainder in col.iter() {
-                trace[remainder.0 as usize] += M31::one();
-            }
+        for remainder in remainders {
+            trace[remainder.0 as usize] += M31::one();
         }
         CircleEvaluation::new(
             CanonicCoset::new(self.log_size).circle_domain(),

@@ -16,3 +16,7 @@ itertools = "0.14.0"
 rand = "0.8.5"
 
 [dev-dependencies]
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
