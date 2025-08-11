@@ -104,6 +104,7 @@ impl Claim {
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<Vec<M31>>,
+        Vec<u32>,
     ) {
         // Initialize the input polynomial with values [1, 2, ..., POLY_SIZE]
         let mut poly = (1..POLY_SIZE + 1).collect::<Vec<_>>();
@@ -250,6 +251,11 @@ impl Claim {
         (
             trace
                 .into_iter()
+                .chain(
+                    polys.last().unwrap()[0]
+                        .iter()
+                        .map(|x| M31::from_u32_unchecked(*x)),
+                )
                 .map(|val| {
                     // Create a column with the trace value at the bit-reversed index
                     let mut col = vec![M31::zero(); 1 << self.log_size];
@@ -269,6 +275,7 @@ impl Claim {
                         .collect::<Vec<_>>()
                 })
                 .collect(),
+            polys.last().unwrap()[0].clone(),
         )
     }
 }
@@ -412,6 +419,11 @@ impl FrameworkEval for Eval {
             }
         }
 
+        poly.last().unwrap()[0].clone().into_iter().for_each(|x| {
+            let output_col = eval.next_trace_mask();
+            eval.add_constraint(x - output_col);
+        });
+
         eval.finalize_logup();
         eval
     }
@@ -492,7 +504,7 @@ impl InteractionClaim {
         // Phase 2: Interaction trace for the merging phase
         // Check remainder values from every other column in the merging phase
         let offset = first_ntt_size * 8 + 1;
-        for col in (offset..trace.len()).step_by(2) {
+        for col in (offset..trace.len() - POLY_SIZE as usize).step_by(2) {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 // Access remainder columns from the merging phase

@@ -118,8 +118,8 @@ impl BigClaim {
         Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         AllTraces,
     ) {
-        let (ntt_trace, ntt_remainders) = self.ntt.gen_trace();
-        let (intt_trace, intt_remainders) = self.intt.gen_trace();
+        let (ntt_trace, ntt_remainders, ntt_output) = self.ntt.gen_trace();
+        let (intt_trace, intt_remainders) = self.intt.gen_trace(ntt_output);
         let range_check_trace = self.range_check.gen_trace(
             &ntt_remainders
                 .into_iter()
