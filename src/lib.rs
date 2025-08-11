@@ -17,4 +17,4 @@ pub mod ntts;
 pub mod zq;
 
 pub const POLY_LOG_SIZE: u32 = 5;
-pub const POLY_SIZE: u32 = 1 << POLY_LOG_SIZE;
+pub const POLY_SIZE: usize = 1 << POLY_LOG_SIZE;

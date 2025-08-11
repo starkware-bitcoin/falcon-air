@@ -13,7 +13,6 @@
 //! with the Falcon signature scheme requirements.
 
 use crate::{
-    POLY_LOG_SIZE,
     ntts::{intt, ntt},
     zq::*,
 };
@@ -271,11 +270,12 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     let interaction_pow = SimdBackend::grind(channel, 2);
     channel.mix_u64(interaction_pow);
 
-    let relations = range_check::LookupElements::draw(channel);
+    let rc_relations = range_check::LookupElements::draw(channel);
+    let ntt_relations = ntt::LookupElements::draw(channel);
 
     // Generate and commit to interaction traces
     let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
-        &relations,
+        &rc_relations,
         &traces.ntt,
         &traces.intt,
         &traces.range_check,
@@ -303,7 +303,8 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
                 &mut tree_span_provider,
                 ntt::Eval {
                     claim: ntt::Claim { log_size: 4 },
-                    lookup_elements: relations.clone(),
+                    rc_lookup_elements: rc_relations.clone(),
+                    ntt_lookup_elements: ntt_relations.clone(),
                 },
                 interaction_claim.ntt.claimed_sum,
             ),
@@ -311,7 +312,8 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
                 &mut tree_span_provider,
                 intt::Eval {
                     claim: intt::Claim { log_size: 4 },
-                    lookup_elements: relations.clone(),
+                    rc_lookup_elements: rc_relations.clone(),
+                    ntt_lookup_elements: ntt_relations.clone(),
                 },
                 interaction_claim.intt.claimed_sum,
             ),
@@ -321,7 +323,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
                     claim: range_check::Claim {
                         log_size: range_check_log_size,
                     },
-                    lookup_elements: relations.clone(),
+                    lookup_elements: rc_relations.clone(),
                 },
                 interaction_claim.range_check.claimed_sum,
             ),
