@@ -37,7 +37,7 @@ use stwo::{
     },
 };
 use stwo_constraint_framework::{
-    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, relation,
+    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry, relation,
 };
 
 use crate::{
@@ -344,7 +344,6 @@ impl FrameworkEval for Eval {
                 f1_times_sq1_remainder.clone(),
             )
             .evaluate(&self.rc_lookup_elements, &mut eval);
-
             AddMod::new(
                 f0.clone(),
                 f1_times_sq1_remainder.clone(),
@@ -352,7 +351,6 @@ impl FrameworkEval for Eval {
                 f0_plus_f1_times_sq1_remainder.clone(),
             )
             .evaluate(&self.rc_lookup_elements, &mut eval);
-
             SubMod::new(
                 f0,
                 f1_times_sq1_remainder,
@@ -360,7 +358,6 @@ impl FrameworkEval for Eval {
                 f0_minus_f1_times_sq1_remainder.clone(),
             )
             .evaluate(&self.rc_lookup_elements, &mut eval);
-
             base_f_ntt.push(vec![
                 f0_plus_f1_times_sq1_remainder,
                 f0_minus_f1_times_sq1_remainder,
@@ -391,7 +388,6 @@ impl FrameworkEval for Eval {
                         eval.next_trace_mask(),
                         eval.next_trace_mask(),
                     );
-
                     // Step 2: Add f0_ntt coefficient to the multiplied result
                     let f0_plus_root_times_f1 = AddMod::<E>::new(
                         coeff_left.clone(),
@@ -399,7 +395,6 @@ impl FrameworkEval for Eval {
                         eval.next_trace_mask(),
                         eval.next_trace_mask(),
                     );
-
                     // Step 3: Subtract the multiplied result from f0_ntt coefficient
                     let f0_minus_root_times_f1 = SubMod::<E>::new(
                         coeff_left.clone(),
@@ -407,7 +402,6 @@ impl FrameworkEval for Eval {
                         eval.next_trace_mask(),
                         eval.next_trace_mask(),
                     );
-
                     // Create a merge operation combining all three steps
                     let merge =
                         Merge::new(root_times_f1, f0_plus_root_times_f1, f0_minus_root_times_f1);
@@ -419,11 +413,18 @@ impl FrameworkEval for Eval {
                 poly[i].push(merged_poly);
             }
         }
+        let mut output = vec![];
 
         poly.last().unwrap()[0].clone().into_iter().for_each(|x| {
             let output_col = eval.next_trace_mask();
+            output.push(output_col.clone());
             eval.add_constraint(x - output_col);
         });
+        eval.add_to_relation(RelationEntry::new(
+            &self.ntt_lookup_elements,
+            -E::EF::one(),
+            &output,
+        ));
 
         eval.finalize_logup();
         eval
@@ -472,13 +473,15 @@ impl InteractionClaim {
     /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        lookup_elements: &range_check::LookupElements,
+        rc_lookup_elements: &range_check::LookupElements,
+        ntt_lookup_elements: &LookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
     ) {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
+        // NTT output linking column moved to the end to match evaluation order
 
         // Phase 1: Interaction trace for the initial butterfly phase
         // Check remainder values from columns 3, 5, 7 of each 8-column group
@@ -491,7 +494,7 @@ impl InteractionClaim {
                     let result_packed = trace[operation_elemnt_index * 8 + col].data[vec_row];
 
                     // Create the denominator using the lookup elements for range checking
-                    let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
+                    let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
                     col_gen.write_frac(vec_row, PackedQM31::one(), denom);
                 }
                 col_gen.finalize_col();
@@ -508,7 +511,7 @@ impl InteractionClaim {
                 let result_packed = trace[col].data[vec_row];
 
                 // Create the denominator using the lookup elements for range checking
-                let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
+                let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
 
                 // The numerator is 1 (we want to check that remainder is in the range)
                 let numerator = PackedQM31::one();
@@ -517,6 +520,20 @@ impl InteractionClaim {
             }
             col_gen.finalize_col();
         }
+
+        // Finally, link NTT output to INTT input with negative multiplicity
+        let mut col_gen = logup_gen.new_col();
+        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+            let mut poly = vec![];
+            for col in trace[trace.len() - POLY_SIZE..].iter() {
+                poly.push(col.data[vec_row]);
+            }
+            let numerator = -PackedQM31::one();
+            let denom: PackedQM31 = ntt_lookup_elements.combine(&poly);
+
+            col_gen.write_frac(vec_row, numerator, denom);
+        }
+        col_gen.finalize_col();
 
         let (interaction_trace, claimed_sum) = logup_gen.finalize_last();
 
