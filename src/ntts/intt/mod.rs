@@ -35,7 +35,9 @@ use stwo::{
         poly::{BitReversedOrder, circle::CircleEvaluation},
     },
 };
-use stwo_constraint_framework::{FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation};
+use stwo_constraint_framework::{
+    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry,
+};
 
 use crate::{
     POLY_LOG_SIZE, POLY_SIZE,
@@ -88,10 +90,11 @@ impl Claim {
     /// modular arithmetic verification.
     ///
     /// The INTT algorithm:
-    /// 1. Starts with polynomial in evaluation form (NTT of [1,2,...,n])
-    /// 2. Splits the polynomial into even and odd coefficients
+    /// 1. Takes NTT output as input (polynomial in evaluation form)
+    /// 2. Splits the polynomial into even and odd coefficients  
     /// 3. Recursively applies INTT to each half
     /// 4. Combines results using inverse roots of unity and scaling factor I2
+    /// 5. Applies final butterfly with SQ1 inverse to complete the transform
     ///
     /// # Returns
     ///
@@ -106,8 +109,8 @@ impl Claim {
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<Vec<M31>>,
     ) {
-        // Initialize the input polynomial with NTT evaluation of [1, 2, ..., POLY_SIZE]
-        // This represents the polynomial in evaluation form that we want to convert back to coefficient form
+        // Initialize with the NTT output polynomial (already in evaluation form)
+        // This represents the polynomial that we want to convert back to coefficient form
         let poly = vec![poly];
 
         // Initialize remainder arrays for each operation type (MUL, ADD, SUB)
@@ -352,6 +355,12 @@ impl FrameworkEval for Eval {
             poly.push(eval.next_trace_mask());
             poly.push(eval.next_trace_mask());
         }
+
+        eval.add_to_relation(RelationEntry::new(
+            &self.ntt_lookup_elements,
+            E::EF::one(),
+            &poly,
+        ));
         let mut polys = vec![vec![]; POLY_LOG_SIZE as usize];
         polys[0] = vec![poly];
 
@@ -412,7 +421,7 @@ impl FrameworkEval for Eval {
                 polys[i].push(f1);
             }
         }
-        let mut output = vec![];
+        let mut res = vec![];
 
         for poly in polys.iter().last().unwrap() {
             debug_assert!(poly.len() == 2);
@@ -438,7 +447,7 @@ impl FrameworkEval for Eval {
                 i2_times_f_ntt_0_plus_f_ntt_remainder.clone(),
             )
             .evaluate(&self.rc_lookup_elements, &mut eval);
-            output.push(i2_times_f_ntt_0_plus_f_ntt_remainder);
+            res.push(i2_times_f_ntt_0_plus_f_ntt_remainder);
 
             // f_ntt[0] - f_ntt[1]
             let f_ntt_0_minus_f_ntt_quotient = eval.next_trace_mask();
@@ -465,12 +474,13 @@ impl FrameworkEval for Eval {
                 i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder.clone(),
             )
             .evaluate(&self.rc_lookup_elements, &mut eval);
-            output.push(i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder);
+            res.push(i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder);
         }
 
-        bit_reverse(&mut output);
-        output.into_iter().for_each(|x| {
+        bit_reverse(&mut res);
+        res.into_iter().for_each(|x| {
             let output_col = eval.next_trace_mask();
+
             eval.add_constraint(x - output_col);
         });
 
@@ -516,13 +526,26 @@ impl InteractionClaim {
     /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        lookup_elements: &range_check::LookupElements,
+        rc_lookup_elements: &range_check::LookupElements,
+        ntt_lookup_elements: &ntt::LookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
     ) {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
+
+        let mut col_gen = logup_gen.new_col();
+        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+            let mut poly = vec![];
+            for col in trace.iter().take(POLY_SIZE) {
+                poly.push(col.data[vec_row]);
+            }
+            let numerator = PackedQM31::one();
+            let denom: PackedQM31 = ntt_lookup_elements.combine(&poly);
+            col_gen.write_frac(vec_row, numerator, denom);
+        }
+        col_gen.finalize_col();
 
         for col in (POLY_SIZE + 1..trace.len() - POLY_SIZE).step_by(2) {
             let mut col_gen = logup_gen.new_col();
@@ -531,7 +554,7 @@ impl InteractionClaim {
                 let result_packed = trace[col].data[vec_row];
 
                 // Create the denominator using the lookup elements for range checking
-                let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
+                let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
 
                 // The numerator is 1 (we want to check that remainder is in the range)
                 let numerator = PackedQM31::one();

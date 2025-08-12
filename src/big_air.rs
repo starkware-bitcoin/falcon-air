@@ -52,11 +52,11 @@ pub struct BigClaim {
 #[derive(Debug, Clone)]
 pub struct AllTraces {
     /// Trace columns from NTT operations
-    ntt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+    pub ntt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace columns from INTT operations
-    intt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+    pub intt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace column from range checking: multiplicities
-    range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    pub range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
 }
 
 impl AllTraces {
@@ -178,7 +178,8 @@ impl BigInteractionClaim {
     ///
     /// Returns the combined interaction traces and the big interaction claim.
     pub fn gen_interaction_trace(
-        lookup_elements: &range_check::LookupElements,
+        rc_lookup_elements: &range_check::LookupElements,
+        ntt_lookup_elements: &ntt::LookupElements,
         ntt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         intt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         range_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
@@ -187,13 +188,21 @@ impl BigInteractionClaim {
         Self,
     ) {
         let (ntt_interaction_trace, ntt_interaction_claim) =
-            ntt::InteractionClaim::gen_interaction_trace(ntt_trace, lookup_elements);
+            ntt::InteractionClaim::gen_interaction_trace(
+                ntt_trace,
+                rc_lookup_elements,
+                ntt_lookup_elements,
+            );
         let (intt_interaction_trace, intt_interaction_claim) =
-            intt::InteractionClaim::gen_interaction_trace(intt_trace, lookup_elements);
+            intt::InteractionClaim::gen_interaction_trace(
+                intt_trace,
+                rc_lookup_elements,
+                ntt_lookup_elements,
+            );
         let (range_check_interaction_trace, range_check_interaction_claim) =
             range_check::InteractionClaim::gen_interaction_trace(
                 range_check_trace,
-                lookup_elements,
+                rc_lookup_elements,
             );
         (
             ntt_interaction_trace
@@ -281,6 +290,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     // Generate and commit to interaction traces
     let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
         &rc_relations,
+        &ntt_relations,
         &traces.ntt,
         &traces.intt,
         &traces.range_check,
@@ -340,6 +350,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::debug;
 
     /// Tests the complete STARK proof generation for all arithmetic operations.
     ///
@@ -356,5 +367,10 @@ mod tests {
                 panic!("Proof generation failed: {:?}", e);
             }
         }
+    }
+
+    #[test]
+    fn test_debug_constraints() {
+        debug::assert_constraints();
     }
 }
