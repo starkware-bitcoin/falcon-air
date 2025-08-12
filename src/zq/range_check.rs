@@ -83,18 +83,6 @@ pub struct Claim {
 }
 
 impl Claim {
-    /// Returns the log sizes for the traces.
-    ///
-    /// [preprocessed_trace, trace, interaction_trace]
-    pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
-        let trace_log_sizes = vec![self.log_size];
-        TreeVec::new(vec![
-            vec![Q.ilog2() + 1],
-            trace_log_sizes,
-            vec![self.log_size; SECURE_EXTENSION_DEGREE],
-        ])
-    }
-
     /// Mixes the claim parameters into the Fiat-Shamir channel.
     pub fn mix_into(&self, channel: &mut impl Channel) {
         channel.mix_u64(self.log_size as u64);
@@ -144,7 +132,7 @@ impl FrameworkEval for Eval {
         // This ensures that the sum of all lookups equals zero
         eval.add_to_relation(RelationEntry::new(
             &self.lookup_elements,
-            -E::EF::one(),
+            E::EF::one(),
             &[lookup_col_1],
         ));
 
@@ -198,7 +186,7 @@ impl InteractionClaim {
             let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
 
             // The numerator is -1 (we want to check that the sum equals zero)
-            let numerator = -PackedQM31::one();
+            let numerator = PackedQM31::one();
 
             col_gen.write_frac(vec_row, numerator, denom);
         }

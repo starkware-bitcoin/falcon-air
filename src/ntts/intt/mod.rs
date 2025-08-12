@@ -44,7 +44,7 @@ use crate::{
     ntts::{
         I2, ROOTS, SQ1,
         intt::split::{Split, SplitNTT},
-        ntt,
+        mul,
     },
     zq::{
         Q,
@@ -65,18 +65,6 @@ pub struct Claim {
 }
 
 impl Claim {
-    /// Returns the log sizes for the traces.
-    ///
-    /// Returns a tree structure containing the log sizes for:
-    /// - `preprocessed_trace`: Empty (no preprocessing needed)
-    /// - `trace`: Main INTT computation trace
-    /// - `interaction_trace`: Range checking interaction trace
-    pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
-        let trace_log_sizes = vec![self.log_size];
-        let interaction_log_sizes = vec![self.log_size; SECURE_EXTENSION_DEGREE];
-        TreeVec::new(vec![vec![], trace_log_sizes, interaction_log_sizes])
-    }
-
     /// Mixes the claim parameters into the Fiat-Shamir channel for non-interactive proof generation.
     pub fn mix_into(&self, channel: &mut impl Channel) {
         channel.mix_u64(self.log_size as u64);
@@ -330,7 +318,7 @@ pub struct Eval {
     /// Lookup elements for range checking modular arithmetic operations
     pub rc_lookup_elements: range_check::LookupElements,
     /// Lookup elements for NTT operations
-    pub ntt_lookup_elements: ntt::LookupElements,
+    pub mul_lookup_elements: mul::LookupElements,
 }
 
 impl FrameworkEval for Eval {
@@ -351,16 +339,16 @@ impl FrameworkEval for Eval {
     /// modular arithmetic operations are correctly verified through range checking.
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
         let mut poly = Vec::with_capacity(POLY_SIZE);
-        for _ in 0..(1 << (POLY_LOG_SIZE - 1)) {
-            poly.push(eval.next_trace_mask());
-            poly.push(eval.next_trace_mask());
+        for _ in 0..POLY_SIZE {
+            let coeff = eval.next_trace_mask();
+            poly.push(coeff.clone());
+            eval.add_to_relation(RelationEntry::new(
+                &self.mul_lookup_elements,
+                -E::EF::one(),
+                &[coeff],
+            ));
         }
 
-        eval.add_to_relation(RelationEntry::new(
-            &self.ntt_lookup_elements,
-            E::EF::one(),
-            &poly,
-        ));
         let mut polys = vec![vec![]; POLY_LOG_SIZE as usize];
         polys[0] = vec![poly];
 
@@ -527,7 +515,7 @@ impl InteractionClaim {
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         rc_lookup_elements: &range_check::LookupElements,
-        ntt_lookup_elements: &ntt::LookupElements,
+        mul_lookup_elements: &mul::LookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
@@ -537,13 +525,11 @@ impl InteractionClaim {
 
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            let mut poly = vec![];
             for col in trace.iter().take(POLY_SIZE) {
-                poly.push(col.data[vec_row]);
+                let numerator = -PackedQM31::one();
+                let denom: PackedQM31 = mul_lookup_elements.combine(&[col.data[vec_row]]);
+                col_gen.write_frac(vec_row, numerator, denom);
             }
-            let numerator = PackedQM31::one();
-            let denom: PackedQM31 = ntt_lookup_elements.combine(&poly);
-            col_gen.write_frac(vec_row, numerator, denom);
         }
         col_gen.finalize_col();
 
@@ -557,7 +543,7 @@ impl InteractionClaim {
                 let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
 
                 // The numerator is 1 (we want to check that remainder is in the range)
-                let numerator = PackedQM31::one();
+                let numerator = -PackedQM31::one();
 
                 col_gen.write_frac(vec_row, numerator, denom);
             }

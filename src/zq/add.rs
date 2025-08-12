@@ -37,6 +37,10 @@ impl<E: stwo_constraint_framework::EvalAtRow> AddMod<E> {
         // We do this by using the range check we defined. Here we increment the multiplicity of
         // this value (remainder) by 1 because we want to range check it and the logup sum has to be exactly 0
         // So here we increment and in the range_check we decrements
-        eval.add_to_relation(RelationEntry::new(lookup_elements, E::EF::one(), &[self.r]));
+        eval.add_to_relation(RelationEntry::new(
+            lookup_elements,
+            -E::EF::one(),
+            &[self.r],
+        ));
     }
 }

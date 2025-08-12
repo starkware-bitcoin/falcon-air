@@ -57,7 +57,7 @@ use crate::{
 
 pub mod merge;
 
-relation!(LookupElements, POLY_SIZE);
+relation!(LookupElements, 1);
 
 #[derive(Debug, Clone)]
 pub struct Claim {
@@ -66,18 +66,6 @@ pub struct Claim {
 }
 
 impl Claim {
-    /// Returns the log sizes for the traces.
-    ///
-    /// Returns a tree structure containing the log sizes for:
-    /// - `preprocessed_trace`: Empty (no preprocessing needed)
-    /// - `trace`: Main NTT computation trace
-    /// - `interaction_trace`: Range checking interaction trace
-    pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
-        let trace_log_sizes = vec![self.log_size];
-        let interaction_log_sizes = vec![self.log_size; SECURE_EXTENSION_DEGREE];
-        TreeVec::new(vec![vec![], trace_log_sizes, interaction_log_sizes])
-    }
-
     /// Mixes the claim parameters into the Fiat-Shamir channel for non-interactive proof generation.
     pub fn mix_into(&self, channel: &mut impl Channel) {
         channel.mix_u64(self.log_size as u64);
@@ -105,13 +93,14 @@ impl Claim {
     #[allow(clippy::type_complexity)]
     pub fn gen_trace(
         &self,
+        poly: &[u32],
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<Vec<M31>>,
         Vec<u32>,
     ) {
         // Initialize the input polynomial with values [1, 2, ..., POLY_SIZE]
-        let mut poly = (1..POLY_SIZE as u32 + 1).collect::<Vec<_>>();
+        let mut poly = poly.to_vec();
 
         // Apply bit-reversal permutation to prepare for in-place NTT computation
         // This ensures the polynomial is in the correct order for the butterfly operations
@@ -418,18 +407,16 @@ impl FrameworkEval for Eval {
                 poly[i].push(merged_poly);
             }
         }
-        let mut output = vec![];
 
         poly.last().unwrap()[0].clone().into_iter().for_each(|x| {
             let output_col = eval.next_trace_mask();
-            output.push(output_col.clone());
-            eval.add_constraint(x - output_col);
+            eval.add_constraint(x - output_col.clone());
+            eval.add_to_relation(RelationEntry::new(
+                &self.ntt_lookup_elements,
+                E::EF::one(),
+                &[output_col],
+            ));
         });
-        eval.add_to_relation(RelationEntry::new(
-            &self.ntt_lookup_elements,
-            -E::EF::one(),
-            &output,
-        ));
 
         eval.finalize_logup();
         eval
@@ -502,7 +489,7 @@ impl InteractionClaim {
                     let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
 
                     // The numerator is 1 (we want to check that remainder is in the range)
-                    let numerator = PackedQM31::one();
+                    let numerator = -PackedQM31::one();
 
                     col_gen.write_frac(vec_row, numerator, denom);
                 }
@@ -523,7 +510,7 @@ impl InteractionClaim {
                 let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
 
                 // The numerator is 1 (we want to check that remainder is in the range)
-                let numerator = PackedQM31::one();
+                let numerator = -PackedQM31::one();
 
                 col_gen.write_frac(vec_row, numerator, denom);
             }
@@ -533,14 +520,11 @@ impl InteractionClaim {
         // Finally, link NTT output to INTT input with negative multiplicity
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            let mut poly = vec![];
             for col in trace[trace.len() - POLY_SIZE..].iter() {
-                poly.push(col.data[vec_row]);
+                let numerator = PackedQM31::one();
+                let denom: PackedQM31 = ntt_lookup_elements.combine(&[col.data[vec_row]]);
+                col_gen.write_frac(vec_row, numerator, denom);
             }
-            let numerator = -PackedQM31::one();
-            let denom: PackedQM31 = ntt_lookup_elements.combine(&poly);
-
-            col_gen.write_frac(vec_row, numerator, denom);
         }
         col_gen.finalize_col();
 

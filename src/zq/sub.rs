@@ -37,6 +37,10 @@ impl<E: stwo_constraint_framework::EvalAtRow> SubMod<E> {
         );
         eval.add_constraint(self.borrow.clone() * (self.borrow - E::F::one()));
 
-        eval.add_to_relation(RelationEntry::new(lookup_elements, E::EF::one(), &[self.r]));
+        eval.add_to_relation(RelationEntry::new(
+            lookup_elements,
+            -E::EF::one(),
+            &[self.r],
+        ));
     }
 }
