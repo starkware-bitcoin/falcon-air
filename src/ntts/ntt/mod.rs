@@ -57,7 +57,7 @@ use crate::{
 
 pub mod merge;
 
-relation!(LookupElements, POLY_SIZE);
+relation!(LookupElements, 1);
 
 #[derive(Debug, Clone)]
 pub struct Claim {

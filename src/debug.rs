@@ -21,7 +21,7 @@ use stwo_constraint_framework::{
 
 use crate::POLY_LOG_SIZE;
 use crate::big_air::{BigClaim, BigInteractionClaim};
-use crate::ntts::{intt, ntt};
+use crate::ntts::{intt, mul, ntt};
 use crate::zq::range_check::RangeCheck12289;
 use crate::zq::{Q, range_check};
 
@@ -44,6 +44,9 @@ pub fn assert_constraints() {
         g_ntt: ntt::Claim {
             log_size: POLY_LOG_SIZE,
         },
+        mul: mul::Claim {
+            log_size: POLY_LOG_SIZE,
+        },
         intt: intt::Claim {
             log_size: POLY_LOG_SIZE,
         },
@@ -62,13 +65,16 @@ pub fn assert_constraints() {
     let rc_relations = range_check::LookupElements::draw(&mut dummy_channel);
     let f_ntt_relations = ntt::LookupElements::draw(&mut dummy_channel);
     let g_ntt_relations = ntt::LookupElements::draw(&mut dummy_channel);
+    let mul_relations = mul::LookupElements::draw(&mut dummy_channel);
     let mut tree_builder = commitment_scheme.tree_builder();
     let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
         &rc_relations,
         &f_ntt_relations,
         &g_ntt_relations,
+        &mul_relations,
         &traces.f_ntt,
         &traces.g_ntt,
+        &traces.mul,
         &traces.intt,
         &traces.range_check,
     );
@@ -101,6 +107,19 @@ pub fn assert_constraints() {
             },
             interaction_claim.g_ntt.claimed_sum,
         ),
+        &mul::Component::new(
+            &mut tree_span_provider,
+            mul::Eval {
+                claim: mul::Claim {
+                    log_size: POLY_LOG_SIZE,
+                },
+                rc_lookup_elements: rc_relations.clone(),
+                f_ntt_lookup_elements: f_ntt_relations.clone(),
+                g_ntt_lookup_elements: g_ntt_relations.clone(),
+                mul_lookup_elements: mul_relations.clone(),
+            },
+            interaction_claim.mul.claimed_sum,
+        ),
         &intt::Component::new(
             &mut tree_span_provider,
             intt::Eval {
@@ -108,9 +127,9 @@ pub fn assert_constraints() {
                     log_size: POLY_LOG_SIZE,
                 },
                 rc_lookup_elements: rc_relations.clone(),
-                ntt_lookup_elements: f_ntt_relations.clone(),
+                mul_lookup_elements: mul_relations.clone(),
             },
-            interaction_claim.f_ntt.claimed_sum,
+            interaction_claim.intt.claimed_sum,
         ),
         &range_check::Component::new(
             &mut tree_span_provider,
@@ -209,20 +228,24 @@ impl<B: BackendForChannel<MC>, MC: MerkleChannel> TreeBuilder<B>
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn assert_components(
     trace: TreeVec<Vec<&Vec<M31>>>,
     components: (
         &FrameworkComponent<ntt::Eval>,
         &FrameworkComponent<ntt::Eval>,
+        &FrameworkComponent<mul::Eval>,
         &FrameworkComponent<intt::Eval>,
         &FrameworkComponent<range_check::Eval>,
     ),
 ) {
-    let (f_ntt, g_ntt, intt, range_check) = components;
+    let (f_ntt, g_ntt, mul, intt, range_check) = components;
     println!("f_ntt");
     assert_component(f_ntt, &trace);
     println!("g_ntt");
     assert_component(g_ntt, &trace);
+    println!("mul");
+    assert_component(mul, &trace);
     println!("intt");
     assert_component(intt, &trace);
     println!("range_check");

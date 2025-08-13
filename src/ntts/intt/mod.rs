@@ -44,7 +44,7 @@ use crate::{
     ntts::{
         I2, ROOTS, SQ1,
         intt::split::{Split, SplitNTT},
-        ntt,
+        mul,
     },
     zq::{
         Q,
@@ -330,7 +330,7 @@ pub struct Eval {
     /// Lookup elements for range checking modular arithmetic operations
     pub rc_lookup_elements: range_check::LookupElements,
     /// Lookup elements for NTT operations
-    pub ntt_lookup_elements: ntt::LookupElements,
+    pub mul_lookup_elements: mul::LookupElements,
 }
 
 impl FrameworkEval for Eval {
@@ -357,12 +357,12 @@ impl FrameworkEval for Eval {
             poly.push(f_even.clone());
             poly.push(f_odd.clone());
             eval.add_to_relation(RelationEntry::new(
-                &self.ntt_lookup_elements,
+                &self.mul_lookup_elements,
                 E::EF::one(),
                 &[f_even],
             ));
             eval.add_to_relation(RelationEntry::new(
-                &self.ntt_lookup_elements,
+                &self.mul_lookup_elements,
                 E::EF::one(),
                 &[f_odd],
             ));
@@ -534,7 +534,7 @@ impl InteractionClaim {
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         rc_lookup_elements: &range_check::LookupElements,
-        ntt_lookup_elements: &ntt::LookupElements,
+        mul_lookup_elements: &mul::LookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
@@ -546,7 +546,7 @@ impl InteractionClaim {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 let v = col.data[vec_row]; // must have all lanes populated
-                let denom: PackedQM31 = ntt_lookup_elements.combine(&[v]);
+                let denom: PackedQM31 = mul_lookup_elements.combine(&[v]);
                 col_gen.write_frac(vec_row, PackedQM31::one(), denom);
             }
             col_gen.finalize_col();
