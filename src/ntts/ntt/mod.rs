@@ -51,7 +51,7 @@ use crate::{
 
 pub mod merge;
 
-relation!(LookupElements, POLY_SIZE);
+relation!(LookupElements, 1);
 
 #[derive(Debug, Clone)]
 pub struct Claim {
@@ -111,6 +111,7 @@ impl Claim {
         // This ensures the polynomial is in the correct order for the butterfly operations
         bit_reverse(&mut poly);
         let bit_reversed_0 = bit_reverse_index(0, self.log_size);
+        let mut remainders_counter = 0;
 
         // Phase 1: Initial Butterfly Operations
         //
@@ -133,18 +134,18 @@ impl Claim {
                 // f1 * SQ1 = quotient * Q + remainder
                 let f1_times_sq1_quotient = (f1 * SQ1) / Q;
                 let f1_times_sq1_remainder = (f1 * SQ1) % Q;
-
+                remainders_counter += 1;
                 // Step 2: Add f0 to the remainder and decompose
                 // f0 + f1 * SQ1 = quotient * Q + remainder
                 let f0_plus_f1_times_sq1_quotient = (f0 + f1_times_sq1_remainder) / Q;
                 let f0_plus_f1_times_sq1_remainder = (f0 + f1_times_sq1_remainder) % Q;
-
+                remainders_counter += 1;
                 // Step 3: Subtract the remainder from f0 and decompose
                 // f0 - f1 * SQ1 = quotient * Q + remainder (with borrow handling)
                 let f0_minus_f1_times_sq1_quotient = (f0 < f1_times_sq1_remainder) as u32;
                 let f0_minus_f1_times_sq1_remainder =
                     (f0 + f0_minus_f1_times_sq1_quotient * Q - f1_times_sq1_remainder) % Q;
-
+                remainders_counter += 1;
                 [
                     f0,
                     f1,
@@ -173,7 +174,6 @@ impl Claim {
                 remainders.push(final_trace[poly_coeff * 8 + col].clone());
             }
         }
-
         // Prepare data structures for the merging phase
         let mut polys = vec![vec![]; POLY_LOG_SIZE as usize];
 
@@ -213,7 +213,7 @@ impl Claim {
                     // f1_ntt[i] * w[2 * i] = quotient * Q + remainder
                     let root_times_f1_quotient = (*coeff_right * root) / Q;
                     let root_times_f1_remainder = (*coeff_right * root) % Q;
-
+                    remainders_counter += 1;
                     trace.push(root_times_f1_quotient);
                     trace.push(root_times_f1_remainder);
 
@@ -223,7 +223,7 @@ impl Claim {
                         (*coeff_left + root_times_f1_remainder) / Q;
                     let f0_plus_root_times_f1_remainder =
                         (*coeff_left + root_times_f1_remainder) % Q;
-
+                    remainders_counter += 1;
                     trace.push(f0_plus_root_times_f1_quotient);
                     trace.push(f0_plus_root_times_f1_remainder);
 
@@ -236,7 +236,7 @@ impl Claim {
                             % Q;
                     trace.push(f0_minus_root_times_f1_borrow);
                     trace.push(f0_minus_root_times_f1_remainder);
-
+                    remainders_counter += 1;
                     // Store the results for the next recursive level
                     merged_poly.push(f0_plus_root_times_f1_remainder);
                     merged_poly.push(f0_minus_root_times_f1_remainder);
@@ -249,7 +249,6 @@ impl Claim {
             col[bit_reversed_0] = M31(val);
             col
         });
-
         let remainders = remainders
             .into_iter()
             .chain(trace.clone().skip(1).step_by(2));
@@ -480,7 +479,6 @@ impl InteractionClaim {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
         // NTT output linking column moved to the end to match evaluation order
-
         // Phase 1: Interaction trace for the initial butterfly phase
         // Check remainder values from columns 3, 5, 7 of each 8-column group
         let first_ntt_size = 1 << (POLY_LOG_SIZE - 1);
@@ -501,8 +499,8 @@ impl InteractionClaim {
 
         // Phase 2: Interaction trace for the merging phase
         // Check remainder values from every other column in the merging phase
-        let offset = first_ntt_size * 8 + 1;
-        for col in (offset..trace.len() - POLY_SIZE).step_by(2) {
+        let offset = first_ntt_size * 8;
+        for col in (offset..trace.len() - POLY_SIZE).skip(1).step_by(2) {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 // Access remainder columns from the merging phase
