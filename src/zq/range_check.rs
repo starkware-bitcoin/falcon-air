@@ -36,9 +36,9 @@ use stwo_constraint_framework::{
 use crate::zq::Q;
 
 #[derive(Debug, Clone)]
-pub struct RangeCheck12289;
+pub struct RangeCheck<const Q: u32>;
 
-impl RangeCheck12289 {
+impl<const Q: u32> RangeCheck<Q> {
     /// Returns the log size needed for the range check column.
     ///
     /// The size is log₂(Q) + 1 to accommodate all values in [0, Q).
