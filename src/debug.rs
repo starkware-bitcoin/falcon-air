@@ -38,7 +38,10 @@ pub fn assert_constraints() {
 
     // Base trace.
     let claim = BigClaim {
-        ntt: ntt::Claim {
+        f_ntt: ntt::Claim {
+            log_size: POLY_LOG_SIZE,
+        },
+        g_ntt: ntt::Claim {
             log_size: POLY_LOG_SIZE,
         },
         intt: intt::Claim {
@@ -57,12 +60,15 @@ pub fn assert_constraints() {
 
     let mut dummy_channel = Blake2sChannel::default();
     let rc_relations = range_check::LookupElements::draw(&mut dummy_channel);
-    let ntt_relations = ntt::LookupElements::draw(&mut dummy_channel);
+    let f_ntt_relations = ntt::LookupElements::draw(&mut dummy_channel);
+    let g_ntt_relations = ntt::LookupElements::draw(&mut dummy_channel);
     let mut tree_builder = commitment_scheme.tree_builder();
     let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
         &rc_relations,
-        &ntt_relations,
-        &traces.ntt,
+        &f_ntt_relations,
+        &g_ntt_relations,
+        &traces.f_ntt,
+        &traces.g_ntt,
         &traces.intt,
         &traces.range_check,
     );
@@ -80,9 +86,20 @@ pub fn assert_constraints() {
                     log_size: POLY_LOG_SIZE,
                 },
                 rc_lookup_elements: rc_relations.clone(),
-                ntt_lookup_elements: ntt_relations.clone(),
+                ntt_lookup_elements: f_ntt_relations.clone(),
             },
-            interaction_claim.ntt.claimed_sum,
+            interaction_claim.f_ntt.claimed_sum,
+        ),
+        &ntt::Component::new(
+            &mut tree_span_provider,
+            ntt::Eval {
+                claim: ntt::Claim {
+                    log_size: POLY_LOG_SIZE,
+                },
+                rc_lookup_elements: rc_relations.clone(),
+                ntt_lookup_elements: g_ntt_relations.clone(),
+            },
+            interaction_claim.g_ntt.claimed_sum,
         ),
         &intt::Component::new(
             &mut tree_span_provider,
@@ -91,9 +108,9 @@ pub fn assert_constraints() {
                     log_size: POLY_LOG_SIZE,
                 },
                 rc_lookup_elements: rc_relations.clone(),
-                ntt_lookup_elements: ntt_relations.clone(),
+                ntt_lookup_elements: f_ntt_relations.clone(),
             },
-            interaction_claim.intt.claimed_sum,
+            interaction_claim.f_ntt.claimed_sum,
         ),
         &range_check::Component::new(
             &mut tree_span_provider,
@@ -196,13 +213,16 @@ fn assert_components(
     trace: TreeVec<Vec<&Vec<M31>>>,
     components: (
         &FrameworkComponent<ntt::Eval>,
+        &FrameworkComponent<ntt::Eval>,
         &FrameworkComponent<intt::Eval>,
         &FrameworkComponent<range_check::Eval>,
     ),
 ) {
-    let (ntt, intt, range_check) = components;
-    println!("ntt");
-    assert_component(ntt, &trace);
+    let (f_ntt, g_ntt, intt, range_check) = components;
+    println!("f_ntt");
+    assert_component(f_ntt, &trace);
+    println!("g_ntt");
+    assert_component(g_ntt, &trace);
     println!("intt");
     assert_component(intt, &trace);
     println!("range_check");
