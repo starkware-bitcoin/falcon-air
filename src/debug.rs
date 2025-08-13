@@ -1,4 +1,4 @@
-// Adapted from https://github.com/starkware-libs/stwo-cairo/blob/main/stwo_cairo_prover/crates/prover/src/debug_tools/assert_constraints.rs
+// Copy pasted from cairo m
 #![allow(unused)]
 
 use std::ops::Deref;
@@ -20,7 +20,9 @@ use stwo_constraint_framework::{
 };
 
 use crate::POLY_LOG_SIZE;
-use crate::big_air::{BigClaim, BigInteractionClaim};
+use crate::big_air::{
+    claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements,
+};
 use crate::ntts::{intt, mul, ntt};
 use crate::zq::range_check::RangeCheck12289;
 use crate::zq::{Q, range_check};
@@ -62,16 +64,10 @@ pub fn assert_constraints() {
     // Interaction trace.
 
     let mut dummy_channel = Blake2sChannel::default();
-    let rc_relations = range_check::RCLookupElements::draw(&mut dummy_channel);
-    let f_ntt_relations = ntt::NTTLookupElements::draw(&mut dummy_channel);
-    let g_ntt_relations = ntt::NTTLookupElements::draw(&mut dummy_channel);
-    let mul_relations = mul::MulLookupElements::draw(&mut dummy_channel);
+    let lookup_elements = LookupElements::draw(&mut dummy_channel);
     let mut tree_builder = commitment_scheme.tree_builder();
     let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
-        &rc_relations,
-        &f_ntt_relations,
-        &g_ntt_relations,
-        &mul_relations,
+        &lookup_elements,
         &traces.f_ntt,
         &traces.g_ntt,
         &traces.mul,
@@ -91,8 +87,8 @@ pub fn assert_constraints() {
                 claim: ntt::Claim {
                     log_size: POLY_LOG_SIZE,
                 },
-                rc_lookup_elements: rc_relations.clone(),
-                ntt_lookup_elements: f_ntt_relations.clone(),
+                rc_lookup_elements: lookup_elements.rc.clone(),
+                ntt_lookup_elements: lookup_elements.f_ntt.clone(),
             },
             interaction_claim.f_ntt.claimed_sum,
         ),
@@ -102,8 +98,8 @@ pub fn assert_constraints() {
                 claim: ntt::Claim {
                     log_size: POLY_LOG_SIZE,
                 },
-                rc_lookup_elements: rc_relations.clone(),
-                ntt_lookup_elements: g_ntt_relations.clone(),
+                rc_lookup_elements: lookup_elements.rc.clone(),
+                ntt_lookup_elements: lookup_elements.g_ntt.clone(),
             },
             interaction_claim.g_ntt.claimed_sum,
         ),
@@ -113,10 +109,10 @@ pub fn assert_constraints() {
                 claim: mul::Claim {
                     log_size: POLY_LOG_SIZE,
                 },
-                rc_lookup_elements: rc_relations.clone(),
-                f_ntt_lookup_elements: f_ntt_relations.clone(),
-                g_ntt_lookup_elements: g_ntt_relations.clone(),
-                mul_lookup_elements: mul_relations.clone(),
+                rc_lookup_elements: lookup_elements.rc.clone(),
+                f_ntt_lookup_elements: lookup_elements.f_ntt.clone(),
+                g_ntt_lookup_elements: lookup_elements.g_ntt.clone(),
+                mul_lookup_elements: lookup_elements.mul.clone(),
             },
             interaction_claim.mul.claimed_sum,
         ),
@@ -126,8 +122,8 @@ pub fn assert_constraints() {
                 claim: intt::Claim {
                     log_size: POLY_LOG_SIZE,
                 },
-                rc_lookup_elements: rc_relations.clone(),
-                mul_lookup_elements: mul_relations.clone(),
+                rc_lookup_elements: lookup_elements.rc.clone(),
+                mul_lookup_elements: lookup_elements.mul.clone(),
             },
             interaction_claim.intt.claimed_sum,
         ),
@@ -137,7 +133,7 @@ pub fn assert_constraints() {
                 claim: range_check::Claim {
                     log_size: range_check_log_size,
                 },
-                lookup_elements: rc_relations.clone(),
+                lookup_elements: lookup_elements.rc.clone(),
             },
             interaction_claim.range_check.claimed_sum,
         ),
