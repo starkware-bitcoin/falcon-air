@@ -418,18 +418,16 @@ impl FrameworkEval for Eval {
                 poly[i].push(merged_poly);
             }
         }
-        let mut output = vec![];
 
         poly.last().unwrap()[0].clone().into_iter().for_each(|x| {
             let output_col = eval.next_trace_mask();
-            output.push(output_col.clone());
+            eval.add_to_relation(RelationEntry::new(
+                &self.ntt_lookup_elements,
+                -E::EF::one(),
+                &[output_col.clone()],
+            ));
             eval.add_constraint(x - output_col);
         });
-        eval.add_to_relation(RelationEntry::new(
-            &self.ntt_lookup_elements,
-            -E::EF::one(),
-            &output,
-        ));
 
         eval.finalize_logup();
         eval
@@ -531,18 +529,15 @@ impl InteractionClaim {
         }
 
         // Finally, link NTT output to INTT input with negative multiplicity
-        let mut col_gen = logup_gen.new_col();
-        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            let mut poly = vec![];
-            for col in trace[trace.len() - POLY_SIZE..].iter() {
-                poly.push(col.data[vec_row]);
+        for col in trace[trace.len() - POLY_SIZE..].iter() {
+            let mut col_gen = logup_gen.new_col();
+            for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+                let v = col.data[vec_row]; // must have all lanes populated
+                let denom: PackedQM31 = ntt_lookup_elements.combine(&[v]);
+                col_gen.write_frac(vec_row, -PackedQM31::one(), denom);
             }
-            let numerator = -PackedQM31::one();
-            let denom: PackedQM31 = ntt_lookup_elements.combine(&poly);
-
-            col_gen.write_frac(vec_row, numerator, denom);
+            col_gen.finalize_col();
         }
-        col_gen.finalize_col();
 
         let (interaction_trace, claimed_sum) = logup_gen.finalize_last();
         (interaction_trace, InteractionClaim { claimed_sum })
