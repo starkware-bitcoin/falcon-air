@@ -105,13 +105,14 @@ impl Claim {
     #[allow(clippy::type_complexity)]
     pub fn gen_trace(
         &self,
+        poly: &[u32; POLY_SIZE],
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<Vec<M31>>,
         Vec<u32>,
     ) {
         // Initialize the input polynomial with values [1, 2, ..., POLY_SIZE]
-        let mut poly = (1..POLY_SIZE as u32 + 1).collect::<Vec<_>>();
+        let mut poly = poly.to_vec();
 
         // Apply bit-reversal permutation to prepare for in-place NTT computation
         // This ensures the polynomial is in the correct order for the butterfly operations

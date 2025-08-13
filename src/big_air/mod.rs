@@ -17,9 +17,10 @@ pub mod interaction_claim;
 pub mod relation;
 
 use crate::{
-    POLY_LOG_SIZE,
+    POLY_LOG_SIZE, POLY_SIZE,
     big_air::{claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements},
-    ntts::{intt, mul, ntt},
+    ntts::{intt, ntt},
+    poly::{mul, sub},
     zq::{Q, range_check},
 };
 
@@ -60,7 +61,11 @@ use stwo_constraint_framework::TraceLocationAllocator;
 ///
 /// Returns `ProvingError` if any step in the proof generation fails,
 /// such as constraint violations or commitment failures.
-pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
+pub fn prove_falcon(
+    s1: &[u32; POLY_SIZE],
+    pk: &[u32; POLY_SIZE],
+    msg_point: &[u32; POLY_SIZE],
+) -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     // Use consistent trace size across all components
     let range_check_log_size = Q.ilog2() + 1;
 
@@ -78,7 +83,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     let mut commitment_scheme =
         CommitmentSchemeProver::<SimdBackend, Blake2sMerkleChannel>::new(pcs_config, &twiddles);
     let mut tree_builder = commitment_scheme.tree_builder();
-    let range_check_preprocessed = range_check::RangeCheck12289::gen_column_simd();
+    let range_check_preprocessed = range_check::RangeCheck::<Q>::gen_column_simd();
     tree_builder.extend_evals([range_check_preprocessed]);
     tree_builder.commit(channel);
 
@@ -96,11 +101,14 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
         intt: intt::Claim {
             log_size: POLY_LOG_SIZE,
         },
-        range_check: range_check::Claim {
+        sub: sub::Claim {
+            log_size: POLY_LOG_SIZE,
+        },
+        full_range_check: range_check::Claim {
             log_size: range_check_log_size,
         },
     };
-    let (trace, traces) = claim.gen_trace();
+    let (trace, traces) = claim.gen_trace(s1, pk, msg_point);
     claim.mix_into(channel);
 
     let mut tree_builder = commitment_scheme.tree_builder();
@@ -120,7 +128,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
         &traces.g_ntt,
         &traces.mul,
         &traces.intt,
-        &traces.range_check,
+        &traces.full_range_check,
     );
     interaction_claim.mix_into(channel);
 
@@ -130,7 +138,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
 
     // Set up trace location allocator with preprocessed columns
     let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
-        range_check::RangeCheck12289::id(),
+        range_check::RangeCheck::<Q>::id(),
     ]);
 
     // Generate the final STARK proof
@@ -142,7 +150,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
                     claim: ntt::Claim {
                         log_size: POLY_LOG_SIZE,
                     },
-                    rc_lookup_elements: lookup_elements.rc.clone(),
+                    rc_lookup_elements: lookup_elements.full_rc.clone(),
                     ntt_lookup_elements: lookup_elements.f_ntt.clone(),
                 },
                 interaction_claim.f_ntt.claimed_sum,
@@ -153,7 +161,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
                     claim: ntt::Claim {
                         log_size: POLY_LOG_SIZE,
                     },
-                    rc_lookup_elements: lookup_elements.rc.clone(),
+                    rc_lookup_elements: lookup_elements.full_rc.clone(),
                     ntt_lookup_elements: lookup_elements.g_ntt.clone(),
                 },
                 interaction_claim.g_ntt.claimed_sum,
@@ -164,7 +172,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
                     claim: mul::Claim {
                         log_size: POLY_LOG_SIZE,
                     },
-                    rc_lookup_elements: lookup_elements.rc.clone(),
+                    rc_lookup_elements: lookup_elements.full_rc.clone(),
                     f_ntt_lookup_elements: lookup_elements.f_ntt.clone(),
                     g_ntt_lookup_elements: lookup_elements.g_ntt.clone(),
                     mul_lookup_elements: lookup_elements.mul.clone(),
@@ -177,8 +185,9 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
                     claim: intt::Claim {
                         log_size: POLY_LOG_SIZE,
                     },
-                    rc_lookup_elements: lookup_elements.rc.clone(),
+                    rc_lookup_elements: lookup_elements.full_rc.clone(),
                     mul_lookup_elements: lookup_elements.mul.clone(),
+                    intt_lookup_elements: lookup_elements.intt.clone(),
                 },
                 interaction_claim.intt.claimed_sum,
             ),
@@ -188,9 +197,9 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
                     claim: range_check::Claim {
                         log_size: range_check_log_size,
                     },
-                    lookup_elements: lookup_elements.rc.clone(),
+                    lookup_elements: lookup_elements.full_rc.clone(),
                 },
-                interaction_claim.range_check.claimed_sum,
+                interaction_claim.full_range_check.claimed_sum,
             ),
         ],
         channel,
@@ -201,7 +210,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::debug;
+    use crate::{debug, input::*};
 
     /// Tests the complete STARK proof generation for all arithmetic operations.
     ///
@@ -211,7 +220,7 @@ mod tests {
     /// - The proof can be generated without errors
     #[test]
     fn test_prove_falcon() {
-        match prove_falcon() {
+        match prove_falcon(TEST_S1, PK, MSG_POINT) {
             Ok(_) => println!("Proof generation successful!"),
             Err(e) => {
                 eprintln!("Proof generation failed: {:?}", e);
@@ -222,6 +231,6 @@ mod tests {
 
     #[test]
     fn test_debug_constraints() {
-        debug::assert_constraints();
+        debug::assert_constraints(TEST_S1, PK, MSG_POINT);
     }
 }

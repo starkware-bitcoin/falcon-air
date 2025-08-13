@@ -19,20 +19,24 @@ use stwo_constraint_framework::{
     assert_constraints_on_trace,
 };
 
-use crate::POLY_LOG_SIZE;
 use crate::big_air::{
     claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements,
 };
-use crate::ntts::{intt, mul, ntt};
-use crate::zq::range_check::RangeCheck12289;
+use crate::ntts::{intt, ntt};
+use crate::poly::{mul, sub};
 use crate::zq::{Q, range_check};
+use crate::{POLY_LOG_SIZE, POLY_SIZE};
 
-pub fn assert_constraints() {
+pub fn assert_constraints(
+    s1: &[u32; POLY_SIZE],
+    pk: &[u32; POLY_SIZE],
+    msg_point: &[u32; POLY_SIZE],
+) {
     let mut commitment_scheme = MockCommitmentScheme::default();
     let range_check_log_size = Q.ilog2() + 1;
 
     // Preprocessed trace.
-    let range_check_preprocessed = range_check::RangeCheck12289::gen_column_simd();
+    let range_check_preprocessed = range_check::RangeCheck::<Q>::gen_column_simd();
 
     let mut tree_builder = commitment_scheme.tree_builder();
     tree_builder.extend_evals([range_check_preprocessed]);
@@ -52,11 +56,14 @@ pub fn assert_constraints() {
         intt: intt::Claim {
             log_size: POLY_LOG_SIZE,
         },
-        range_check: range_check::Claim {
+        sub: sub::Claim {
+            log_size: POLY_LOG_SIZE,
+        },
+        full_range_check: range_check::Claim {
             log_size: range_check_log_size,
         },
     };
-    let (trace, traces) = claim.gen_trace();
+    let (trace, traces) = claim.gen_trace(s1, pk, msg_point);
     let mut tree_builder = commitment_scheme.tree_builder();
     tree_builder.extend_evals(trace);
     tree_builder.finalize_interaction();
@@ -72,13 +79,14 @@ pub fn assert_constraints() {
         &traces.g_ntt,
         &traces.mul,
         &traces.intt,
-        &traces.range_check,
+        &traces.full_range_check,
     );
     tree_builder.extend_evals(interaction_trace);
     tree_builder.finalize_interaction();
 
-    let mut tree_span_provider =
-        TraceLocationAllocator::new_with_preproccessed_columns(&[RangeCheck12289::id()]);
+    let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
+        range_check::RangeCheck::<Q>::id(),
+    ]);
 
     let components = (
         &ntt::Component::new(
@@ -87,7 +95,7 @@ pub fn assert_constraints() {
                 claim: ntt::Claim {
                     log_size: POLY_LOG_SIZE,
                 },
-                rc_lookup_elements: lookup_elements.rc.clone(),
+                rc_lookup_elements: lookup_elements.full_rc.clone(),
                 ntt_lookup_elements: lookup_elements.f_ntt.clone(),
             },
             interaction_claim.f_ntt.claimed_sum,
@@ -98,7 +106,7 @@ pub fn assert_constraints() {
                 claim: ntt::Claim {
                     log_size: POLY_LOG_SIZE,
                 },
-                rc_lookup_elements: lookup_elements.rc.clone(),
+                rc_lookup_elements: lookup_elements.full_rc.clone(),
                 ntt_lookup_elements: lookup_elements.g_ntt.clone(),
             },
             interaction_claim.g_ntt.claimed_sum,
@@ -109,7 +117,7 @@ pub fn assert_constraints() {
                 claim: mul::Claim {
                     log_size: POLY_LOG_SIZE,
                 },
-                rc_lookup_elements: lookup_elements.rc.clone(),
+                rc_lookup_elements: lookup_elements.full_rc.clone(),
                 f_ntt_lookup_elements: lookup_elements.f_ntt.clone(),
                 g_ntt_lookup_elements: lookup_elements.g_ntt.clone(),
                 mul_lookup_elements: lookup_elements.mul.clone(),
@@ -122,8 +130,9 @@ pub fn assert_constraints() {
                 claim: intt::Claim {
                     log_size: POLY_LOG_SIZE,
                 },
-                rc_lookup_elements: lookup_elements.rc.clone(),
+                rc_lookup_elements: lookup_elements.full_rc.clone(),
                 mul_lookup_elements: lookup_elements.mul.clone(),
+                intt_lookup_elements: lookup_elements.intt.clone(),
             },
             interaction_claim.intt.claimed_sum,
         ),
@@ -133,9 +142,9 @@ pub fn assert_constraints() {
                 claim: range_check::Claim {
                     log_size: range_check_log_size,
                 },
-                lookup_elements: lookup_elements.rc.clone(),
+                lookup_elements: lookup_elements.full_rc.clone(),
             },
-            interaction_claim.range_check.claimed_sum,
+            interaction_claim.full_range_check.claimed_sum,
         ),
     );
 

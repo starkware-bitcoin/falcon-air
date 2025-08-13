@@ -1,13 +1,13 @@
-//! # Modular Multiplication Component
+//! # Modular Subtraction Component
 //!
-//! This module implements STARK proof components for modular multiplication operations.
+//! This module implements STARK proof components for modular subtraction operations.
 //!
-//! The modular multiplication operation computes (a * b) mod q, where q = 12289.
+//! The modular subtraction operation computes (a - b) mod q, where q = 12289.
 //! The operation is decomposed into:
-//! - a * b = quotient * q + remainder
+//! - a - b = remainder (mod q)
 //! - where remainder ∈ [0, q)
 //!
-//! The component generates traces for the operands (a, b), quotient, and remainder,
+//! The component generates traces for the operands (a, b) and remainder,
 //! and enforces the constraint that the remainder is within the valid range.
 
 use num_traits::One;
@@ -25,17 +25,15 @@ use stwo::{
     },
 };
 use stwo_constraint_framework::{
-    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry, relation,
+    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry,
 };
 
 use crate::{
-    ntts::ntt,
-    zq::{Q, mul::MulMod, range_check},
+    ntts::intt,
+    zq::{Q, range_check, sub::SubMod},
 };
 
-relation!(LookupElements, 1);
-
-// This is a helper function for the prover to generate the trace for the mul component
+// This is a helper function for the prover to generate the trace for the sub component
 #[derive(Debug, Clone)]
 pub struct Claim {
     /// The log base 2 of the trace size
@@ -56,9 +54,9 @@ impl Claim {
         channel.mix_u64(self.log_size as u64);
     }
 
-    /// Generates the trace for the mul component
-    /// Generates 2 random numbers and creates a trace for the mul component
-    /// returns the columns in this order: a, b, quotient, remainder
+    /// Generates the trace for the sub component
+    /// Generates 2 random numbers and creates a trace for the sub component
+    /// returns the columns in this order: a, b, borrow, remainder
     pub fn gen_trace(
         &self,
         a: &[u32],
@@ -68,15 +66,15 @@ impl Claim {
         Vec<M31>,
     ) {
         assert!(a.len() == b.len(), "a and b must have the same length");
-        let quotient = a
+        let borrow = a
             .iter()
             .zip(b.iter())
-            .map(|(a, b)| M31::from_u32_unchecked((a * b) / Q))
+            .map(|(a, b)| M31::from_u32_unchecked((a < b) as u32))
             .collect::<Vec<_>>();
         let remainder = a
             .iter()
             .zip(b.iter())
-            .map(|(a, b)| M31::from_u32_unchecked((a * b) % Q))
+            .map(|(a, b)| M31::from_u32_unchecked(a + (a < b) as u32 * Q - b))
             .collect::<Vec<_>>();
         let a = a
             .iter()
@@ -87,12 +85,8 @@ impl Claim {
             .map(|b| M31::from_u32_unchecked(*b))
             .collect::<Vec<_>>();
         let domain = CanonicCoset::new(self.log_size).circle_domain();
-        println!("a: {:?}", a[0]);
-        println!("b: {:?}", b[0]);
-        println!("quotient: {:?}", quotient[0]);
-        println!("remainder: {:?}", remainder[0]);
         (
-            [a, b, quotient, remainder.clone()]
+            [a, b, borrow, remainder.clone()]
                 .into_iter()
                 .map(|col| {
                     CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
@@ -113,12 +107,8 @@ pub struct Eval {
     pub claim: Claim,
     /// Lookup elements for range checking
     pub rc_lookup_elements: range_check::LookupElements,
-    /// Lookup elements for f_ntt
-    pub f_ntt_lookup_elements: ntt::LookupElements,
-    /// Lookup elements for g_ntt
-    pub g_ntt_lookup_elements: ntt::LookupElements,
-    /// Lookup elements for multiplication
-    pub mul_lookup_elements: LookupElements,
+    /// Lookup elements for intt operations
+    pub intt_lookup_elements: intt::LookupElements,
 }
 
 impl FrameworkEval for Eval {
@@ -134,26 +124,17 @@ impl FrameworkEval for Eval {
         // Those values were filled during the trace generation
         let a = eval.next_trace_mask();
         let b = eval.next_trace_mask();
-        let q = eval.next_trace_mask();
-        let r = eval.next_trace_mask();
-        MulMod::new(a.clone(), b.clone(), q, r.clone())
-            .evaluate(&self.rc_lookup_elements, &mut eval);
+        let borrow = eval.next_trace_mask();
+        let remainder = eval.next_trace_mask();
+
+        SubMod::new(a, b.clone(), borrow, remainder).evaluate(&self.rc_lookup_elements, &mut eval);
+
         eval.add_to_relation(RelationEntry::new(
-            &self.f_ntt_lookup_elements,
-            E::EF::one(),
-            &[a],
-        ));
-        eval.add_to_relation(RelationEntry::new(
-            &self.g_ntt_lookup_elements,
+            &self.intt_lookup_elements,
             E::EF::one(),
             &[b],
         ));
-        eval.add_to_relation(RelationEntry::new(
-            &self.mul_lookup_elements,
-            -E::EF::one(),
-            &[r],
-        ));
-        eval.finalize_logup();
+        eval.finalize_logup_in_pairs();
         eval
     }
 }
@@ -170,14 +151,14 @@ impl InteractionClaim {
         channel.mix_felts(&[self.claimed_sum]);
     }
 
-    /// Generates the interaction trace for modular multiplication.
+    /// Generates the interaction trace for modular subtraction.
     ///
-    /// This method creates the interaction trace that connects the multiplication component
+    /// This method creates the interaction trace that connects the subtraction component
     /// with the range check component through the lookup protocol.
     ///
     /// # Parameters
     ///
-    /// - `trace`: The trace columns from the multiplication component
+    /// - `trace`: The trace columns from the subtraction component
     /// - `lookup_elements`: The lookup elements for range checking
     ///
     /// # Returns
@@ -185,24 +166,22 @@ impl InteractionClaim {
     /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        rc_lookup_elements: &range_check::LookupElements,
-        f_ntt_lookup_elements: &ntt::LookupElements,
-        g_ntt_lookup_elements: &ntt::LookupElements,
-        mul_lookup_elements: &LookupElements,
+        lookup_elements: &range_check::LookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
     ) {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
+
         // Range check
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            // Get the remainder value from the trace (column 3)
+            // Get the remainder value from the trace (column 2)
             let result_packed = trace[3].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
 
             // The numerator is 1 (we want to check that remainder is in the range)
             let numerator = PackedQM31::one();
@@ -211,48 +190,17 @@ impl InteractionClaim {
         }
         col_gen.finalize_col();
 
-        // f_ntt
+        // Intt
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            // Get the remainder value from the trace (column 3)
-            let result_packed = trace[0].data[vec_row];
-
-            // Create the denominator using the lookup elements
-            let denom: PackedQM31 = f_ntt_lookup_elements.combine(&[result_packed]);
-
-            // The numerator is 1 (we want to check that remainder is in the range)
-            let numerator = PackedQM31::one();
-
-            col_gen.write_frac(vec_row, numerator, denom);
-        }
-        col_gen.finalize_col();
-        // g_ntt
-        let mut col_gen = logup_gen.new_col();
-        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            // Get the remainder value from the trace (column 3)
+            // Get the remainder value from the trace (column 2)
             let result_packed = trace[1].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = g_ntt_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
 
             // The numerator is 1 (we want to check that remainder is in the range)
             let numerator = PackedQM31::one();
-
-            col_gen.write_frac(vec_row, numerator, denom);
-        }
-        col_gen.finalize_col();
-
-        // mul output
-        let mut col_gen = logup_gen.new_col();
-        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            // Get the remainder value from the trace (column 3)
-            let result_packed = trace[3].data[vec_row];
-
-            // Create the denominator using the lookup elements
-            let denom: PackedQM31 = mul_lookup_elements.combine(&[result_packed]);
-
-            // The numerator is 1 (we want to check that remainder is in the range)
-            let numerator = -PackedQM31::one();
 
             col_gen.write_frac(vec_row, numerator, denom);
         }
@@ -263,5 +211,5 @@ impl InteractionClaim {
     }
 }
 
-/// Type alias for the modular multiplication component.
+/// Type alias for the modular subtraction component.
 pub type Component = FrameworkComponent<Eval>;

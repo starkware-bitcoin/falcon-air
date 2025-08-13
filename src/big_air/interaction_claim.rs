@@ -1,6 +1,7 @@
 use crate::{
     big_air::relation::LookupElements,
-    ntts::{intt, mul, ntt},
+    ntts::{intt, ntt},
+    poly::mul,
     zq::range_check,
 };
 use itertools::{Itertools, chain};
@@ -26,7 +27,7 @@ pub struct BigInteractionClaim {
     /// Interaction claim for INTT operations
     pub intt: intt::InteractionClaim,
     /// Interaction claim for range checking
-    pub range_check: range_check::InteractionClaim,
+    pub full_range_check: range_check::InteractionClaim,
 }
 
 impl BigInteractionClaim {
@@ -36,7 +37,7 @@ impl BigInteractionClaim {
         self.g_ntt.mix_into(channel);
         self.mul.mix_into(channel);
         self.intt.mix_into(channel);
-        self.range_check.mix_into(channel);
+        self.full_range_check.mix_into(channel);
     }
 
     /// Computes the total claimed sum across all interactions.
@@ -48,7 +49,7 @@ impl BigInteractionClaim {
             + self.g_ntt.claimed_sum
             + self.mul.claimed_sum
             + self.intt.claimed_sum
-            + self.range_check.claimed_sum
+            + self.full_range_check.claimed_sum
     }
 
     /// Generates interaction traces for all components.
@@ -70,7 +71,7 @@ impl BigInteractionClaim {
         g_ntt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         mul_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         intt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        range_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        full_range_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     ) -> (
         Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Self,
@@ -78,19 +79,19 @@ impl BigInteractionClaim {
         let (f_ntt_interaction_trace, f_ntt_interaction_claim) =
             ntt::InteractionClaim::gen_interaction_trace(
                 f_ntt_trace,
-                &lookup_elements.rc,
+                &lookup_elements.full_rc,
                 &lookup_elements.f_ntt,
             );
         let (g_ntt_interaction_trace, g_ntt_interaction_claim) =
             ntt::InteractionClaim::gen_interaction_trace(
                 g_ntt_trace,
-                &lookup_elements.rc,
+                &lookup_elements.full_rc,
                 &lookup_elements.g_ntt,
             );
         let (mul_interaction_trace, mul_interaction_claim) =
             mul::InteractionClaim::gen_interaction_trace(
                 mul_trace,
-                &lookup_elements.rc,
+                &lookup_elements.full_rc,
                 &lookup_elements.f_ntt,
                 &lookup_elements.g_ntt,
                 &lookup_elements.mul,
@@ -98,13 +99,14 @@ impl BigInteractionClaim {
         let (intt_interaction_trace, intt_interaction_claim) =
             intt::InteractionClaim::gen_interaction_trace(
                 intt_trace,
-                &lookup_elements.rc,
+                &lookup_elements.full_rc,
                 &lookup_elements.mul,
+                &lookup_elements.intt,
             );
-        let (range_check_interaction_trace, range_check_interaction_claim) =
+        let (full_range_check_interaction_trace, full_range_check_interaction_claim) =
             range_check::InteractionClaim::gen_interaction_trace(
-                range_check_trace,
-                &lookup_elements.rc,
+                full_range_check_trace,
+                &lookup_elements.full_rc,
             );
         (
             chain!(
@@ -112,7 +114,7 @@ impl BigInteractionClaim {
                 g_ntt_interaction_trace,
                 mul_interaction_trace,
                 intt_interaction_trace,
-                range_check_interaction_trace,
+                full_range_check_interaction_trace,
             )
             .collect_vec(),
             Self {
@@ -120,7 +122,7 @@ impl BigInteractionClaim {
                 g_ntt: g_ntt_interaction_claim,
                 mul: mul_interaction_claim,
                 intt: intt_interaction_claim,
-                range_check: range_check_interaction_claim,
+                full_range_check: full_range_check_interaction_claim,
             },
         )
     }

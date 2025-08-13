@@ -36,7 +36,7 @@ use stwo::{
     },
 };
 use stwo_constraint_framework::{
-    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry,
+    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry, relation,
 };
 
 use crate::{
@@ -44,8 +44,8 @@ use crate::{
     ntts::{
         I2, ROOTS, SQ1,
         intt::split::{Split, SplitNTT},
-        mul,
     },
+    poly::mul,
     zq::{
         Q,
         add::{ADD_COL, AddMod},
@@ -58,6 +58,7 @@ use crate::{
 
 pub mod split;
 
+relation!(LookupElements, 1);
 #[derive(Debug, Clone)]
 pub struct Claim {
     /// The log base 2 of the trace size
@@ -108,6 +109,7 @@ impl Claim {
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<Vec<M31>>,
+        Vec<u32>,
     ) {
         // Initialize with the NTT output polynomial (already in evaluation form)
         // This represents the polynomial that we want to convert back to coefficient form
@@ -284,7 +286,7 @@ impl Claim {
         bit_reverse(&mut debug_result);
         let trace = trace
             .into_iter()
-            .chain(debug_result)
+            .chain(debug_result.clone())
             .map(M31)
             .collect::<Vec<_>>();
 
@@ -314,6 +316,7 @@ impl Claim {
                         .collect::<Vec<_>>()
                 })
                 .collect(),
+            debug_result,
         )
     }
 }
@@ -331,6 +334,8 @@ pub struct Eval {
     pub rc_lookup_elements: range_check::LookupElements,
     /// Lookup elements for NTT operations
     pub mul_lookup_elements: mul::LookupElements,
+    /// Lookup elements for intt operations
+    pub intt_lookup_elements: LookupElements,
 }
 
 impl FrameworkEval for Eval {
@@ -487,6 +492,11 @@ impl FrameworkEval for Eval {
         bit_reverse(&mut res);
         res.into_iter().for_each(|x| {
             let output_col = eval.next_trace_mask();
+            eval.add_to_relation(RelationEntry::new(
+                &self.intt_lookup_elements,
+                -E::EF::one(),
+                &[x.clone()],
+            ));
 
             eval.add_constraint(x - output_col);
         });
@@ -535,6 +545,7 @@ impl InteractionClaim {
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         rc_lookup_elements: &range_check::LookupElements,
         mul_lookup_elements: &mul::LookupElements,
+        intt_lookup_elements: &LookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
@@ -565,6 +576,16 @@ impl InteractionClaim {
                 let numerator = PackedQM31::one();
 
                 col_gen.write_frac(vec_row, numerator, denom);
+            }
+            col_gen.finalize_col();
+        }
+
+        for col in trace.iter().skip(trace.len() - POLY_SIZE).take(POLY_SIZE) {
+            let mut col_gen = logup_gen.new_col();
+            for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+                let v = col.data[vec_row]; // must have all lanes populated
+                let denom: PackedQM31 = intt_lookup_elements.combine(&[v]);
+                col_gen.write_frac(vec_row, -PackedQM31::one(), denom);
             }
             col_gen.finalize_col();
         }
