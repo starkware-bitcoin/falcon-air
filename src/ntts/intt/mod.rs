@@ -44,7 +44,7 @@ use crate::{
     ntts::{
         I2, ROOTS, SQ1,
         intt::split::{Split, SplitNTT},
-        ntt,
+        mul,
     },
     zq::{
         Q,
@@ -330,7 +330,7 @@ pub struct Eval {
     /// Lookup elements for range checking modular arithmetic operations
     pub rc_lookup_elements: range_check::LookupElements,
     /// Lookup elements for NTT operations
-    pub ntt_lookup_elements: ntt::LookupElements,
+    pub mul_lookup_elements: mul::LookupElements,
 }
 
 impl FrameworkEval for Eval {
@@ -352,15 +352,22 @@ impl FrameworkEval for Eval {
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
         let mut poly = Vec::with_capacity(POLY_SIZE);
         for _ in 0..(1 << (POLY_LOG_SIZE - 1)) {
-            poly.push(eval.next_trace_mask());
-            poly.push(eval.next_trace_mask());
+            let f_even = eval.next_trace_mask();
+            let f_odd = eval.next_trace_mask();
+            poly.push(f_even.clone());
+            poly.push(f_odd.clone());
+            eval.add_to_relation(RelationEntry::new(
+                &self.mul_lookup_elements,
+                E::EF::one(),
+                &[f_even],
+            ));
+            eval.add_to_relation(RelationEntry::new(
+                &self.mul_lookup_elements,
+                E::EF::one(),
+                &[f_odd],
+            ));
         }
 
-        eval.add_to_relation(RelationEntry::new(
-            &self.ntt_lookup_elements,
-            E::EF::one(),
-            &poly,
-        ));
         let mut polys = vec![vec![]; POLY_LOG_SIZE as usize];
         polys[0] = vec![poly];
 
@@ -527,7 +534,7 @@ impl InteractionClaim {
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         rc_lookup_elements: &range_check::LookupElements,
-        ntt_lookup_elements: &ntt::LookupElements,
+        mul_lookup_elements: &mul::LookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
@@ -535,17 +542,15 @@ impl InteractionClaim {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
 
-        let mut col_gen = logup_gen.new_col();
-        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            let mut poly = vec![];
-            for col in trace.iter().take(POLY_SIZE) {
-                poly.push(col.data[vec_row]);
+        for col in trace.iter().take(POLY_SIZE) {
+            let mut col_gen = logup_gen.new_col();
+            for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+                let v = col.data[vec_row]; // must have all lanes populated
+                let denom: PackedQM31 = mul_lookup_elements.combine(&[v]);
+                col_gen.write_frac(vec_row, PackedQM31::one(), denom);
             }
-            let numerator = PackedQM31::one();
-            let denom: PackedQM31 = ntt_lookup_elements.combine(&poly);
-            col_gen.write_frac(vec_row, numerator, denom);
+            col_gen.finalize_col();
         }
-        col_gen.finalize_col();
 
         for col in (POLY_SIZE + 1..trace.len() - POLY_SIZE).step_by(2) {
             let mut col_gen = logup_gen.new_col();
