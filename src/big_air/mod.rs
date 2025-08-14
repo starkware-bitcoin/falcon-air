@@ -20,7 +20,7 @@ use crate::{
     POLY_LOG_SIZE, POLY_SIZE,
     big_air::{claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements},
     ntts::{intt, ntt},
-    poly::{mul, sub},
+    poly::{euclidean_norm, mul, sub},
     zq::{Q, range_check},
 };
 
@@ -84,7 +84,8 @@ pub fn prove_falcon(
         CommitmentSchemeProver::<SimdBackend, Blake2sMerkleChannel>::new(pcs_config, &twiddles);
     let mut tree_builder = commitment_scheme.tree_builder();
     let range_check_preprocessed = range_check::RangeCheck::<Q>::gen_column_simd();
-    tree_builder.extend_evals([range_check_preprocessed]);
+    let half_range_check_preprocessed = range_check::RangeCheck::<{ Q / 2 }>::gen_column_simd();
+    tree_builder.extend_evals([range_check_preprocessed, half_range_check_preprocessed]);
     tree_builder.commit(channel);
 
     // Generate and commit to main traces
@@ -104,8 +105,14 @@ pub fn prove_falcon(
         sub: sub::Claim {
             log_size: POLY_LOG_SIZE,
         },
+        euclidean_norm: euclidean_norm::Claim {
+            log_size: POLY_LOG_SIZE,
+        },
         full_range_check: range_check::Claim {
             log_size: range_check_log_size,
+        },
+        half_range_check: range_check::Claim {
+            log_size: range_check_log_size - 1,
         },
     };
     let (trace, traces) = claim.gen_trace(s1, pk, msg_point);
@@ -128,7 +135,10 @@ pub fn prove_falcon(
         &traces.g_ntt,
         &traces.mul,
         &traces.intt,
+        &traces.sub,
+        &traces.euclidean_norm,
         &traces.full_range_check,
+        &traces.half_range_check,
     );
     interaction_claim.mix_into(channel);
 
@@ -191,6 +201,29 @@ pub fn prove_falcon(
                 },
                 interaction_claim.intt.claimed_sum,
             ),
+            &sub::Component::new(
+                &mut tree_span_provider,
+                sub::Eval {
+                    claim: sub::Claim {
+                        log_size: POLY_LOG_SIZE,
+                    },
+                    rc_lookup_elements: lookup_elements.full_rc.clone(),
+                    intt_lookup_elements: lookup_elements.intt.clone(),
+                    sub_lookup_elements: lookup_elements.sub.clone(),
+                },
+                interaction_claim.sub.claimed_sum,
+            ),
+            &euclidean_norm::Component::new(
+                &mut tree_span_provider,
+                euclidean_norm::Eval {
+                    claim: euclidean_norm::Claim {
+                        log_size: POLY_LOG_SIZE,
+                    },
+                    half_rc_lookup_elements: lookup_elements.half_rc.clone(),
+                    input_lookup_elements: Some(lookup_elements.sub.clone()),
+                },
+                interaction_claim.euclidean_norm.claimed_sum,
+            ),
             &range_check::Component::new(
                 &mut tree_span_provider,
                 range_check::Eval {
@@ -200,6 +233,16 @@ pub fn prove_falcon(
                     lookup_elements: lookup_elements.full_rc.clone(),
                 },
                 interaction_claim.full_range_check.claimed_sum,
+            ),
+            &range_check::Component::new(
+                &mut tree_span_provider,
+                range_check::Eval {
+                    claim: range_check::Claim {
+                        log_size: range_check_log_size,
+                    },
+                    lookup_elements: lookup_elements.half_rc.clone(),
+                },
+                interaction_claim.half_range_check.claimed_sum,
             ),
         ],
         channel,

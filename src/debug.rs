@@ -23,7 +23,7 @@ use crate::big_air::{
     claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements,
 };
 use crate::ntts::{intt, ntt};
-use crate::poly::{mul, sub};
+use crate::poly::{euclidean_norm, mul, sub};
 use crate::zq::{Q, range_check};
 use crate::{POLY_LOG_SIZE, POLY_SIZE};
 
@@ -59,7 +59,13 @@ pub fn assert_constraints(
         sub: sub::Claim {
             log_size: POLY_LOG_SIZE,
         },
+        euclidean_norm: euclidean_norm::Claim {
+            log_size: POLY_LOG_SIZE,
+        },
         full_range_check: range_check::Claim {
+            log_size: range_check_log_size,
+        },
+        half_range_check: range_check::Claim {
             log_size: range_check_log_size,
         },
     };
@@ -79,7 +85,10 @@ pub fn assert_constraints(
         &traces.g_ntt,
         &traces.mul,
         &traces.intt,
+        &traces.sub,
+        &traces.euclidean_norm,
         &traces.full_range_check,
+        &traces.half_range_check,
     );
     tree_builder.extend_evals(interaction_trace);
     tree_builder.finalize_interaction();
@@ -136,6 +145,29 @@ pub fn assert_constraints(
             },
             interaction_claim.intt.claimed_sum,
         ),
+        &sub::Component::new(
+            &mut tree_span_provider,
+            sub::Eval {
+                claim: sub::Claim {
+                    log_size: POLY_LOG_SIZE,
+                },
+                rc_lookup_elements: lookup_elements.full_rc.clone(),
+                intt_lookup_elements: lookup_elements.intt.clone(),
+                sub_lookup_elements: lookup_elements.sub.clone(),
+            },
+            interaction_claim.sub.claimed_sum,
+        ),
+        &euclidean_norm::Component::new(
+            &mut tree_span_provider,
+            euclidean_norm::Eval {
+                claim: euclidean_norm::Claim {
+                    log_size: POLY_LOG_SIZE,
+                },
+                half_rc_lookup_elements: lookup_elements.half_rc.clone(),
+                input_lookup_elements: Some(lookup_elements.sub.clone()),
+            },
+            interaction_claim.euclidean_norm.claimed_sum,
+        ),
         &range_check::Component::new(
             &mut tree_span_provider,
             range_check::Eval {
@@ -145,6 +177,16 @@ pub fn assert_constraints(
                 lookup_elements: lookup_elements.full_rc.clone(),
             },
             interaction_claim.full_range_check.claimed_sum,
+        ),
+        &range_check::Component::new(
+            &mut tree_span_provider,
+            range_check::Eval {
+                claim: range_check::Claim {
+                    log_size: range_check_log_size,
+                },
+                lookup_elements: lookup_elements.half_rc.clone(),
+            },
+            interaction_claim.half_range_check.claimed_sum,
         ),
     );
 
@@ -241,10 +283,13 @@ fn assert_components(
         &FrameworkComponent<ntt::Eval>,
         &FrameworkComponent<mul::Eval>,
         &FrameworkComponent<intt::Eval>,
+        &FrameworkComponent<sub::Eval>,
+        &FrameworkComponent<euclidean_norm::Eval>,
+        &FrameworkComponent<range_check::Eval>,
         &FrameworkComponent<range_check::Eval>,
     ),
 ) {
-    let (f_ntt, g_ntt, mul, intt, range_check) = components;
+    let (f_ntt, g_ntt, mul, intt, sub, euclidean_norm, range_check, half_range_check) = components;
     println!("f_ntt");
     assert_component(f_ntt, &trace);
     println!("g_ntt");
@@ -253,8 +298,14 @@ fn assert_components(
     assert_component(mul, &trace);
     println!("intt");
     assert_component(intt, &trace);
+    println!("sub");
+    assert_component(sub, &trace);
+    println!("euclidean_norm");
+    assert_component(euclidean_norm, &trace);
     println!("range_check");
     assert_component(range_check, &trace);
+    println!("half_range_check");
+    assert_component(half_range_check, &trace);
 }
 
 fn assert_component<E: FrameworkEval + Sync>(

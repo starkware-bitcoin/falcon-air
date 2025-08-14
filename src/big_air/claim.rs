@@ -1,7 +1,7 @@
 use crate::{
     POLY_SIZE,
     ntts::{intt, ntt},
-    poly::{mul, sub},
+    poly::{euclidean_norm, mul, sub},
     zq::range_check,
 };
 use itertools::{Itertools, chain};
@@ -25,8 +25,12 @@ pub struct BigClaim {
     pub intt: intt::Claim,
     /// Claim for subtraction operations
     pub sub: sub::Claim,
+    /// Claim for euclidean norm operations
+    pub euclidean_norm: euclidean_norm::Claim,
     /// Claim for range checking operations
     pub full_range_check: range_check::Claim,
+    /// Claim for half range checking operations
+    pub half_range_check: range_check::Claim,
 }
 
 #[derive(Debug, Clone)]
@@ -41,8 +45,12 @@ pub struct AllTraces {
     pub intt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace columns from subtraction operations
     pub sub: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+    /// Trace columns from euclidean norm operations
+    pub euclidean_norm: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace column from range checking: multiplicities
     pub full_range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    /// Trace column from half range checking: multiplicities
+    pub half_range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
 }
 
 impl AllTraces {
@@ -53,7 +61,9 @@ impl AllTraces {
         mul: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         intt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         sub: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+        euclidean_norm: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         full_range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        half_range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     ) -> Self {
         Self {
             f_ntt,
@@ -61,7 +71,9 @@ impl AllTraces {
             mul,
             intt,
             sub,
+            euclidean_norm,
             full_range_check,
+            half_range_check,
         }
     }
 }
@@ -78,7 +90,9 @@ impl BigClaim {
             self.mul.log_sizes(),
             self.intt.log_sizes(),
             self.sub.log_sizes(),
+            self.euclidean_norm.log_sizes(),
             self.full_range_check.log_sizes(),
+            self.half_range_check.log_sizes(),
         ];
         TreeVec::concat_cols(trees.into_iter())
     }
@@ -93,7 +107,9 @@ impl BigClaim {
         self.mul.mix_into(channel);
         self.intt.mix_into(channel);
         self.sub.mix_into(channel);
+        self.euclidean_norm.mix_into(channel);
         self.full_range_check.mix_into(channel);
+        self.half_range_check.mix_into(channel);
     }
 
     /// Generates traces for all arithmetic operations.
@@ -126,6 +142,14 @@ impl BigClaim {
             .intt
             .gen_trace(mul_remainders.iter().map(|r| r.0).collect_vec());
         let (sub_trace, sub_remainders) = self.sub.gen_trace(msg_point, &intt_output);
+        let (euclidean_norm_trace, euclidean_norm_remainders) = self.euclidean_norm.gen_trace(
+            &sub_remainders
+                .iter()
+                .map(|r| r.0)
+                .collect_vec()
+                .try_into()
+                .unwrap(),
+        );
         let full_range_check_trace = self.full_range_check.gen_trace(
             &chain!(
                 f_ntt_remainders,
@@ -135,13 +159,19 @@ impl BigClaim {
             )
             .collect_vec(),
         );
+        let half_range_check_trace = self
+            .half_range_check
+            .gen_trace(&[euclidean_norm_remainders]);
         (
             chain!(
                 f_ntt_trace.clone(),
                 g_ntt_trace.clone(),
                 mul_trace.clone(),
                 intt_trace.clone(),
-                [full_range_check_trace.clone()]
+                sub_trace.clone(),
+                euclidean_norm_trace.clone(),
+                [full_range_check_trace.clone()],
+                [half_range_check_trace.clone()]
             )
             .collect_vec(),
             AllTraces::new(
@@ -150,7 +180,9 @@ impl BigClaim {
                 mul_trace,
                 intt_trace,
                 sub_trace,
+                euclidean_norm_trace,
                 full_range_check_trace,
+                half_range_check_trace,
             ),
         )
     }
