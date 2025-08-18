@@ -1,3 +1,4 @@
+use num_traits::Zero;
 use stwo::{
     core::{
         ColumnVec,
@@ -146,6 +147,11 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     let (interaction_trace, interaction_claim) =
         BigInteractionClaim::gen_interaction_trace(&relations, &traces.0, &traces.1);
     interaction_claim.mix_into(channel);
+    assert_eq!(
+        interaction_claim.claimed_sum(),
+        QM31::zero(),
+        "invalid logup sum"
+    );
 
     let mut tree_builder = commitment_scheme.tree_builder();
     tree_builder.extend_evals(interaction_trace);

@@ -90,11 +90,12 @@ impl FrameworkEval for Eval {
 
     fn evaluate<E: EvalAtRow>(&self, mut eval: E) -> E {
         let lookup_col_1 = eval.next_trace_mask();
+        let range_check_col = eval.get_preprocessed_column(RangeCheck12289::id());
 
         eval.add_to_relation(RelationEntry::new(
             &self.lookup_elements,
-            -E::EF::one(),
-            &[lookup_col_1],
+            -E::EF::from(lookup_col_1),
+            &[range_check_col],
         ));
 
         eval.finalize_logup_in_pairs();
@@ -123,16 +124,17 @@ impl InteractionClaim {
         let log_size = trace.domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
         let mut col_gen = logup_gen.new_col();
+        let range_check_col = RangeCheck12289::gen_column_simd();
 
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             // Get the result value from the trace (column 2)
-            let result_packed = trace.data[vec_row];
+            let multiplicity = trace.data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.combine(&[range_check_col.data[vec_row]]);
 
             // The numerator is 1 (we want to check that result is in the range)
-            let numerator = -PackedQM31::one();
+            let numerator = -PackedQM31::from(multiplicity);
 
             col_gen.write_frac(vec_row, numerator, denom);
         }
