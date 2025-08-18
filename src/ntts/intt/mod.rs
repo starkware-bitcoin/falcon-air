@@ -495,7 +495,7 @@ impl FrameworkEval for Eval {
             eval.add_to_relation(RelationEntry::new(
                 &self.intt_lookup_elements,
                 -E::EF::one(),
-                &[x.clone()],
+                &[output_col.clone()],
             ));
 
             eval.add_constraint(x - output_col);

@@ -20,19 +20,20 @@ use crate::{
     POLY_LOG_SIZE, POLY_SIZE,
     big_air::{claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements},
     ntts::{intt, ntt},
-    poly::{mul, sub},
+    poly::{euclidean_norm, mul, sub},
     zq::{Q, range_check},
 };
 
+use num_traits::Zero;
 use stwo::{
     core::{
         channel::{Blake2sChannel, Channel},
+        fields::qm31::QM31,
         pcs::PcsConfig,
         poly::circle::CanonicCoset,
         proof::StarkProof,
         proof_of_work::GrindOps,
-        vcs::blake2_merkle::Blake2sMerkleChannel,
-        vcs::blake2_merkle::Blake2sMerkleHasher,
+        vcs::blake2_merkle::{Blake2sMerkleChannel, Blake2sMerkleHasher},
     },
     prover::{
         CommitmentSchemeProver, ProvingError, backend::simd::SimdBackend, poly::circle::PolyOps,
@@ -84,7 +85,8 @@ pub fn prove_falcon(
         CommitmentSchemeProver::<SimdBackend, Blake2sMerkleChannel>::new(pcs_config, &twiddles);
     let mut tree_builder = commitment_scheme.tree_builder();
     let range_check_preprocessed = range_check::RangeCheck::<Q>::gen_column_simd();
-    tree_builder.extend_evals([range_check_preprocessed]);
+    let half_range_check_preprocessed = range_check::RangeCheck::<{ Q / 2 }>::gen_column_simd();
+    tree_builder.extend_evals([range_check_preprocessed, half_range_check_preprocessed]);
     tree_builder.commit(channel);
 
     // Generate and commit to main traces
@@ -104,8 +106,14 @@ pub fn prove_falcon(
         sub: sub::Claim {
             log_size: POLY_LOG_SIZE,
         },
+        euclidean_norm: euclidean_norm::Claim {
+            log_size: POLY_LOG_SIZE,
+        },
         full_range_check: range_check::Claim {
             log_size: range_check_log_size,
+        },
+        half_range_check: range_check::Claim {
+            log_size: range_check_log_size - 1,
         },
     };
     let (trace, traces) = claim.gen_trace(s1, pk, msg_point);
@@ -128,9 +136,17 @@ pub fn prove_falcon(
         &traces.g_ntt,
         &traces.mul,
         &traces.intt,
+        &traces.sub,
+        &traces.euclidean_norm,
         &traces.full_range_check,
+        &traces.half_range_check,
     );
     interaction_claim.mix_into(channel);
+    assert_eq!(
+        interaction_claim.claimed_sum(),
+        QM31::zero(),
+        "invalid logup sum"
+    );
 
     let mut tree_builder = commitment_scheme.tree_builder();
     tree_builder.extend_evals(interaction_trace);
@@ -139,6 +155,7 @@ pub fn prove_falcon(
     // Set up trace location allocator with preprocessed columns
     let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
         range_check::RangeCheck::<Q>::id(),
+        range_check::RangeCheck::<{ Q / 2 }>::id(),
     ]);
 
     // Generate the final STARK proof
@@ -147,9 +164,7 @@ pub fn prove_falcon(
             &ntt::Component::new(
                 &mut tree_span_provider,
                 ntt::Eval {
-                    claim: ntt::Claim {
-                        log_size: POLY_LOG_SIZE,
-                    },
+                    claim: claim.f_ntt,
                     rc_lookup_elements: lookup_elements.full_rc.clone(),
                     ntt_lookup_elements: lookup_elements.f_ntt.clone(),
                 },
@@ -158,9 +173,7 @@ pub fn prove_falcon(
             &ntt::Component::new(
                 &mut tree_span_provider,
                 ntt::Eval {
-                    claim: ntt::Claim {
-                        log_size: POLY_LOG_SIZE,
-                    },
+                    claim: claim.g_ntt,
                     rc_lookup_elements: lookup_elements.full_rc.clone(),
                     ntt_lookup_elements: lookup_elements.g_ntt.clone(),
                 },
@@ -169,9 +182,7 @@ pub fn prove_falcon(
             &mul::Component::new(
                 &mut tree_span_provider,
                 mul::Eval {
-                    claim: mul::Claim {
-                        log_size: POLY_LOG_SIZE,
-                    },
+                    claim: claim.mul,
                     rc_lookup_elements: lookup_elements.full_rc.clone(),
                     f_ntt_lookup_elements: lookup_elements.f_ntt.clone(),
                     g_ntt_lookup_elements: lookup_elements.g_ntt.clone(),
@@ -182,24 +193,47 @@ pub fn prove_falcon(
             &intt::Component::new(
                 &mut tree_span_provider,
                 intt::Eval {
-                    claim: intt::Claim {
-                        log_size: POLY_LOG_SIZE,
-                    },
+                    claim: claim.intt,
                     rc_lookup_elements: lookup_elements.full_rc.clone(),
                     mul_lookup_elements: lookup_elements.mul.clone(),
                     intt_lookup_elements: lookup_elements.intt.clone(),
                 },
                 interaction_claim.intt.claimed_sum,
             ),
+            &sub::Component::new(
+                &mut tree_span_provider,
+                sub::Eval {
+                    claim: claim.sub,
+                    rc_lookup_elements: lookup_elements.full_rc.clone(),
+                    intt_lookup_elements: lookup_elements.intt.clone(),
+                    sub_lookup_elements: lookup_elements.sub.clone(),
+                },
+                interaction_claim.sub.claimed_sum,
+            ),
+            &euclidean_norm::Component::new(
+                &mut tree_span_provider,
+                euclidean_norm::Eval {
+                    claim: claim.euclidean_norm,
+                    half_rc_lookup_elements: lookup_elements.half_rc.clone(),
+                    s0_lookup_elements: lookup_elements.sub.clone(),
+                },
+                interaction_claim.euclidean_norm.claimed_sum,
+            ),
             &range_check::Component::new(
                 &mut tree_span_provider,
                 range_check::Eval {
-                    claim: range_check::Claim {
-                        log_size: range_check_log_size,
-                    },
+                    claim: claim.full_range_check,
                     lookup_elements: lookup_elements.full_rc.clone(),
                 },
                 interaction_claim.full_range_check.claimed_sum,
+            ),
+            &range_check::Component::new(
+                &mut tree_span_provider,
+                range_check::Eval {
+                    claim: claim.half_range_check,
+                    lookup_elements: lookup_elements.half_rc.clone(),
+                },
+                interaction_claim.half_range_check.claimed_sum,
             ),
         ],
         channel,

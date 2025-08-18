@@ -4,7 +4,9 @@
 use std::ops::Deref;
 
 use itertools::Itertools;
+use num_traits::Zero;
 use stwo::core::ColumnVec;
+use stwo::core::fields::qm31::QM31;
 
 use stwo::core::channel::{Blake2sChannel, MerkleChannel};
 use stwo::core::fields::m31::M31;
@@ -23,7 +25,7 @@ use crate::big_air::{
     claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements,
 };
 use crate::ntts::{intt, ntt};
-use crate::poly::{mul, sub};
+use crate::poly::{euclidean_norm, mul, sub};
 use crate::zq::{Q, range_check};
 use crate::{POLY_LOG_SIZE, POLY_SIZE};
 
@@ -37,13 +39,14 @@ pub fn assert_constraints(
 
     // Preprocessed trace.
     let range_check_preprocessed = range_check::RangeCheck::<Q>::gen_column_simd();
+    let half_range_check_preprocessed = range_check::RangeCheck::<{ Q / 2 }>::gen_column_simd();
 
     let mut tree_builder = commitment_scheme.tree_builder();
-    tree_builder.extend_evals([range_check_preprocessed]);
+    tree_builder.extend_evals([range_check_preprocessed, half_range_check_preprocessed]);
     tree_builder.finalize_interaction();
 
     // Base trace.
-    let claim = BigClaim {
+    let mut claim = BigClaim {
         f_ntt: ntt::Claim {
             log_size: POLY_LOG_SIZE,
         },
@@ -59,8 +62,14 @@ pub fn assert_constraints(
         sub: sub::Claim {
             log_size: POLY_LOG_SIZE,
         },
+        euclidean_norm: euclidean_norm::Claim {
+            log_size: POLY_LOG_SIZE,
+        },
         full_range_check: range_check::Claim {
             log_size: range_check_log_size,
+        },
+        half_range_check: range_check::Claim {
+            log_size: range_check_log_size - 1,
         },
     };
     let (trace, traces) = claim.gen_trace(s1, pk, msg_point);
@@ -79,22 +88,24 @@ pub fn assert_constraints(
         &traces.g_ntt,
         &traces.mul,
         &traces.intt,
+        &traces.sub,
+        &traces.euclidean_norm,
         &traces.full_range_check,
+        &traces.half_range_check,
     );
     tree_builder.extend_evals(interaction_trace);
     tree_builder.finalize_interaction();
 
     let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
         range_check::RangeCheck::<Q>::id(),
+        range_check::RangeCheck::<{ Q / 2 }>::id(),
     ]);
 
     let components = (
         &ntt::Component::new(
             &mut tree_span_provider,
             ntt::Eval {
-                claim: ntt::Claim {
-                    log_size: POLY_LOG_SIZE,
-                },
+                claim: claim.f_ntt,
                 rc_lookup_elements: lookup_elements.full_rc.clone(),
                 ntt_lookup_elements: lookup_elements.f_ntt.clone(),
             },
@@ -103,9 +114,7 @@ pub fn assert_constraints(
         &ntt::Component::new(
             &mut tree_span_provider,
             ntt::Eval {
-                claim: ntt::Claim {
-                    log_size: POLY_LOG_SIZE,
-                },
+                claim: claim.g_ntt,
                 rc_lookup_elements: lookup_elements.full_rc.clone(),
                 ntt_lookup_elements: lookup_elements.g_ntt.clone(),
             },
@@ -114,9 +123,7 @@ pub fn assert_constraints(
         &mul::Component::new(
             &mut tree_span_provider,
             mul::Eval {
-                claim: mul::Claim {
-                    log_size: POLY_LOG_SIZE,
-                },
+                claim: claim.mul,
                 rc_lookup_elements: lookup_elements.full_rc.clone(),
                 f_ntt_lookup_elements: lookup_elements.f_ntt.clone(),
                 g_ntt_lookup_elements: lookup_elements.g_ntt.clone(),
@@ -127,14 +134,31 @@ pub fn assert_constraints(
         &intt::Component::new(
             &mut tree_span_provider,
             intt::Eval {
-                claim: intt::Claim {
-                    log_size: POLY_LOG_SIZE,
-                },
+                claim: claim.intt,
                 rc_lookup_elements: lookup_elements.full_rc.clone(),
                 mul_lookup_elements: lookup_elements.mul.clone(),
                 intt_lookup_elements: lookup_elements.intt.clone(),
             },
             interaction_claim.intt.claimed_sum,
+        ),
+        &sub::Component::new(
+            &mut tree_span_provider,
+            sub::Eval {
+                claim: claim.sub,
+                rc_lookup_elements: lookup_elements.full_rc.clone(),
+                intt_lookup_elements: lookup_elements.intt.clone(),
+                sub_lookup_elements: lookup_elements.sub.clone(),
+            },
+            interaction_claim.sub.claimed_sum,
+        ),
+        &euclidean_norm::Component::new(
+            &mut tree_span_provider,
+            euclidean_norm::Eval {
+                claim: claim.euclidean_norm,
+                half_rc_lookup_elements: lookup_elements.half_rc.clone(),
+                s0_lookup_elements: lookup_elements.sub.clone(),
+            },
+            interaction_claim.euclidean_norm.claimed_sum,
         ),
         &range_check::Component::new(
             &mut tree_span_provider,
@@ -146,9 +170,24 @@ pub fn assert_constraints(
             },
             interaction_claim.full_range_check.claimed_sum,
         ),
+        &range_check::Component::new(
+            &mut tree_span_provider,
+            range_check::Eval {
+                claim: range_check::Claim {
+                    log_size: range_check_log_size - 1,
+                },
+                lookup_elements: lookup_elements.half_rc.clone(),
+            },
+            interaction_claim.half_range_check.claimed_sum,
+        ),
     );
 
     assert_components(commitment_scheme.trace_domain_evaluations(), components);
+    assert_eq!(
+        interaction_claim.claimed_sum(),
+        QM31::zero(),
+        "invalid logup sum"
+    );
 }
 
 #[derive(Default)]
@@ -241,10 +280,13 @@ fn assert_components(
         &FrameworkComponent<ntt::Eval>,
         &FrameworkComponent<mul::Eval>,
         &FrameworkComponent<intt::Eval>,
+        &FrameworkComponent<sub::Eval>,
+        &FrameworkComponent<euclidean_norm::Eval>,
+        &FrameworkComponent<range_check::Eval>,
         &FrameworkComponent<range_check::Eval>,
     ),
 ) {
-    let (f_ntt, g_ntt, mul, intt, range_check) = components;
+    let (f_ntt, g_ntt, mul, intt, sub, euclidean_norm, range_check, half_range_check) = components;
     println!("f_ntt");
     assert_component(f_ntt, &trace);
     println!("g_ntt");
@@ -253,8 +295,14 @@ fn assert_components(
     assert_component(mul, &trace);
     println!("intt");
     assert_component(intt, &trace);
+    println!("sub");
+    assert_component(sub, &trace);
+    println!("euclidean_norm");
+    assert_component(euclidean_norm, &trace);
     println!("range_check");
     assert_component(range_check, &trace);
+    println!("half_range_check");
+    assert_component(half_range_check, &trace);
 }
 
 fn assert_component<E: FrameworkEval + Sync>(

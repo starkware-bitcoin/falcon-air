@@ -20,7 +20,10 @@ pub mod zq;
 
 pub const POLY_LOG_SIZE: u32 = 10;
 pub const POLY_SIZE: usize = 1 << POLY_LOG_SIZE;
-
+pub const SIGNATURE_BOUNDS: [u32; 10] = [
+    101498, 208714, 428865, 892039, 1852696, 3842630, 7959734, 16468416, 34034726, 70265242,
+];
+pub const SIGNATURE_BOUND: u32 = SIGNATURE_BOUNDS[POLY_LOG_SIZE as usize - 1];
 #[cfg(test)]
 mod input {
     use crate::POLY_SIZE;

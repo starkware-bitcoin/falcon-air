@@ -1,7 +1,7 @@
 use crate::{
     big_air::relation::LookupElements,
     ntts::{intt, ntt},
-    poly::mul,
+    poly::{euclidean_norm, mul, sub},
     zq::range_check,
 };
 use itertools::{Itertools, chain};
@@ -26,8 +26,14 @@ pub struct BigInteractionClaim {
     pub mul: mul::InteractionClaim,
     /// Interaction claim for INTT operations
     pub intt: intt::InteractionClaim,
+    /// Interaction claim for subtraction operations
+    pub sub: sub::InteractionClaim,
+    /// Interaction claim for euclidean norm operations
+    pub euclidean_norm: euclidean_norm::InteractionClaim,
     /// Interaction claim for range checking
     pub full_range_check: range_check::InteractionClaim,
+    /// Interaction claim for half range checking
+    pub half_range_check: range_check::InteractionClaim,
 }
 
 impl BigInteractionClaim {
@@ -37,7 +43,10 @@ impl BigInteractionClaim {
         self.g_ntt.mix_into(channel);
         self.mul.mix_into(channel);
         self.intt.mix_into(channel);
+        self.sub.mix_into(channel);
+        self.euclidean_norm.mix_into(channel);
         self.full_range_check.mix_into(channel);
+        self.half_range_check.mix_into(channel);
     }
 
     /// Computes the total claimed sum across all interactions.
@@ -45,11 +54,22 @@ impl BigInteractionClaim {
     /// This sum should equal zero for a valid proof, ensuring that
     /// all lookup relations are properly satisfied.
     pub fn claimed_sum(&self) -> QM31 {
+        println!("f_ntt: {:?}", self.f_ntt.claimed_sum);
+        println!("g_ntt: {:?}", self.g_ntt.claimed_sum);
+        println!("mul: {:?}", self.mul.claimed_sum);
+        println!("intt: {:?}", self.intt.claimed_sum);
+        println!("sub: {:?}", self.sub.claimed_sum);
+        println!("euclidean_norm: {:?}", self.euclidean_norm.claimed_sum);
+        println!("full_range_check: {:?}", self.full_range_check.claimed_sum);
+        println!("half_range_check: {:?}", self.half_range_check.claimed_sum);
         self.f_ntt.claimed_sum
             + self.g_ntt.claimed_sum
             + self.mul.claimed_sum
             + self.intt.claimed_sum
+            + self.sub.claimed_sum
+            + self.euclidean_norm.claimed_sum
             + self.full_range_check.claimed_sum
+            + self.half_range_check.claimed_sum
     }
 
     /// Generates interaction traces for all components.
@@ -71,7 +91,10 @@ impl BigInteractionClaim {
         g_ntt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         mul_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         intt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
+        sub_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
+        euclidean_norm_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         full_range_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        half_range_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     ) -> (
         Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Self,
@@ -103,10 +126,28 @@ impl BigInteractionClaim {
                 &lookup_elements.mul,
                 &lookup_elements.intt,
             );
+        let (sub_interaction_trace, sub_interaction_claim) =
+            sub::InteractionClaim::gen_interaction_trace(
+                sub_trace,
+                &lookup_elements.full_rc,
+                &lookup_elements.intt,
+                &lookup_elements.sub,
+            );
+        let (euclidean_norm_interaction_trace, euclidean_norm_interaction_claim) =
+            euclidean_norm::InteractionClaim::gen_interaction_trace(
+                euclidean_norm_trace,
+                &lookup_elements.half_rc,
+                &lookup_elements.sub,
+            );
         let (full_range_check_interaction_trace, full_range_check_interaction_claim) =
             range_check::InteractionClaim::gen_interaction_trace(
                 full_range_check_trace,
                 &lookup_elements.full_rc,
+            );
+        let (half_range_check_interaction_trace, half_range_check_interaction_claim) =
+            range_check::InteractionClaim::gen_interaction_trace(
+                half_range_check_trace,
+                &lookup_elements.half_rc,
             );
         (
             chain!(
@@ -114,7 +155,10 @@ impl BigInteractionClaim {
                 g_ntt_interaction_trace,
                 mul_interaction_trace,
                 intt_interaction_trace,
+                sub_interaction_trace,
+                euclidean_norm_interaction_trace,
                 full_range_check_interaction_trace,
+                half_range_check_interaction_trace,
             )
             .collect_vec(),
             Self {
@@ -122,7 +166,10 @@ impl BigInteractionClaim {
                 g_ntt: g_ntt_interaction_claim,
                 mul: mul_interaction_claim,
                 intt: intt_interaction_claim,
+                sub: sub_interaction_claim,
+                euclidean_norm: euclidean_norm_interaction_claim,
                 full_range_check: full_range_check_interaction_claim,
+                half_range_check: half_range_check_interaction_claim,
             },
         )
     }
