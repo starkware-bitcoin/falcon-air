@@ -485,57 +485,66 @@ impl InteractionClaim {
     ) {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
-        // NTT output linking column moved to the end to match evaluation order
 
-        // Phase 1: Interaction trace for the initial butterfly phase
-        // Check remainder values from columns 3, 5, 7 of each 8-column group
+        // --- one-hot location in your columns ---
+        // You place the value at index bit_reverse_index(0, log_size), which is 0.
+        let hot_row = bit_reverse_index(0, log_size);
+        let hot_vec_row = hot_row >> LOG_N_LANES;
+        let hot_lane = hot_row & ((1 << LOG_N_LANES) - 1);
+
+        // Packed numerator that is 1 only on the hot lane, 0 elsewhere.
+        // Replace this constructor if your API differs.
+        let mut lane_vals = [SecureField::zero(); 1 << LOG_N_LANES];
+        lane_vals[hot_lane] = SecureField::one();
+        let lane_one = PackedQM31::from_array(lane_vals);
+        let lane_zero = PackedQM31::zero();
+
+        // -------- Phase 1: butterfly remainders (per operation: cols 3,5,7) --------
         let first_ntt_size = 1 << (POLY_LOG_SIZE - 1);
-        for operation_elemnt_index in 0..first_ntt_size {
+        for op_idx in 0..first_ntt_size {
             for col in [3, 5, 7] {
                 let mut col_gen = logup_gen.new_col();
                 for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-                    // Each butterfly operation uses 8 columns, so we access the remainder columns
-                    let result_packed = trace[operation_elemnt_index * 8 + col].data[vec_row];
-
-                    // Create the denominator using the lookup elements for range checking
-                    let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
-
-                    // The numerator is 1 (we want to check that remainder is in the range)
-                    let numerator = PackedQM31::one();
-
-                    col_gen.write_frac(vec_row, numerator, denom);
+                    if vec_row == hot_vec_row {
+                        let result_packed = trace[op_idx * 8 + col].data[vec_row];
+                        let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
+                        col_gen.write_frac(vec_row, lane_one, denom);
+                    } else {
+                        // 0/1 = 0, contributes nothing
+                        col_gen.write_frac(vec_row, lane_zero, PackedQM31::one());
+                    }
                 }
                 col_gen.finalize_col();
             }
         }
 
-        // Phase 2: Interaction trace for the merging phase
-        // Check remainder values from every other column in the merging phase
+        // -------- Phase 2: merge-phase remainders (every other col starting at +1) --------
         let offset = first_ntt_size * 8 + 1;
         for col in (offset..trace.len() - POLY_SIZE).step_by(2) {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-                // Access remainder columns from the merging phase
-                let result_packed = trace[col].data[vec_row];
-
-                // Create the denominator using the lookup elements for range checking
-                let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
-
-                // The numerator is 1 (we want to check that remainder is in the range)
-                let numerator = PackedQM31::one();
-
-                col_gen.write_frac(vec_row, numerator, denom);
+                if vec_row == hot_vec_row {
+                    let result_packed = trace[col].data[vec_row];
+                    let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
+                    col_gen.write_frac(vec_row, lane_one, denom);
+                } else {
+                    col_gen.write_frac(vec_row, lane_zero, PackedQM31::one());
+                }
             }
             col_gen.finalize_col();
         }
 
-        // Finally, link NTT output to INTT input with negative multiplicity
+        // -------- Phase 3: link final NTT outputs with negative multiplicity --------
         for col in trace[trace.len() - POLY_SIZE..].iter() {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-                let v = col.data[vec_row]; // must have all lanes populated
-                let denom: PackedQM31 = ntt_lookup_elements.combine(&[v]);
-                col_gen.write_frac(vec_row, -PackedQM31::one(), denom);
+                if vec_row == hot_vec_row {
+                    let v = col.data[vec_row];
+                    let denom: PackedQM31 = ntt_lookup_elements.combine(&[v]);
+                    col_gen.write_frac(vec_row, -lane_one, denom);
+                } else {
+                    col_gen.write_frac(vec_row, lane_zero, PackedQM31::one());
+                }
             }
             col_gen.finalize_col();
         }

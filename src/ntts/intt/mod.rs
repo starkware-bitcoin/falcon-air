@@ -553,39 +553,62 @@ impl InteractionClaim {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
 
+        // One-hot location (you place the value at bit_reverse_index(0, log_size) which is 0)
+        let hot_row = bit_reverse_index(0, log_size);
+        let hot_vec_row = hot_row >> LOG_N_LANES;
+        let hot_lane = hot_row & ((1 << LOG_N_LANES) - 1);
+
+        // Packed numerator that is 1 only on the hot lane, 0 elsewhere.
+        // If your API differs, replace `from_lanes` with the appropriate constructor.
+        let mut lanes = [SecureField::zero(); 1 << LOG_N_LANES];
+        lanes[hot_lane] = SecureField::one();
+        let lane_one = PackedQM31::from_array(lanes);
+        let lane_zero = PackedQM31::zero();
+
+        // ----- Phase 1: link INTT inputs (first POLY_SIZE columns) -----
         for col in trace.iter().take(POLY_SIZE) {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-                let v = col.data[vec_row]; // must have all lanes populated
-                let denom: PackedQM31 = mul_lookup_elements.combine(&[v]);
-                col_gen.write_frac(vec_row, PackedQM31::one(), denom);
+                if vec_row == hot_vec_row {
+                    let v = col.data[vec_row];
+                    let denom: PackedQM31 = mul_lookup_elements.combine(&[v]);
+                    col_gen.write_frac(vec_row, lane_one, denom);
+                } else {
+                    // 0/1 = 0 (no-op)
+                    col_gen.write_frac(vec_row, lane_zero, PackedQM31::one());
+                }
             }
             col_gen.finalize_col();
         }
 
+        // ----- Phase 2: range-check remainders from the recursive body -----
+        // Your existing indexing: skip the POLY_SIZE inputs, then take every other
+        // column (remainders) until the final POLY_SIZE outputs.
         for col in (POLY_SIZE + 1..trace.len() - POLY_SIZE).step_by(2) {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-                // Access remainder columns from the merging phase
-                let result_packed = trace[col].data[vec_row];
-
-                // Create the denominator using the lookup elements for range checking
-                let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
-
-                // The numerator is 1 (we want to check that remainder is in the range)
-                let numerator = PackedQM31::one();
-
-                col_gen.write_frac(vec_row, numerator, denom);
+                if vec_row == hot_vec_row {
+                    let result_packed = trace[col].data[vec_row];
+                    let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
+                    col_gen.write_frac(vec_row, lane_one, denom);
+                } else {
+                    col_gen.write_frac(vec_row, lane_zero, PackedQM31::one());
+                }
             }
             col_gen.finalize_col();
         }
 
+        // ----- Phase 3: link INTT outputs with negative multiplicity (last POLY_SIZE cols) -----
         for col in trace.iter().skip(trace.len() - POLY_SIZE).take(POLY_SIZE) {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-                let v = col.data[vec_row]; // must have all lanes populated
-                let denom: PackedQM31 = intt_lookup_elements.combine(&[v]);
-                col_gen.write_frac(vec_row, -PackedQM31::one(), denom);
+                if vec_row == hot_vec_row {
+                    let v = col.data[vec_row];
+                    let denom: PackedQM31 = intt_lookup_elements.combine(&[v]);
+                    col_gen.write_frac(vec_row, -lane_one, denom);
+                } else {
+                    col_gen.write_frac(vec_row, lane_zero, PackedQM31::one());
+                }
             }
             col_gen.finalize_col();
         }

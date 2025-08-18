@@ -138,14 +138,15 @@ impl FrameworkEval for Eval {
     }
 
     fn evaluate<E: EvalAtRow>(&self, mut eval: E) -> E {
-        let lookup_col_1 = eval.next_trace_mask();
+        let rc_col = eval.get_preprocessed_column(RangeCheck::<Q>::id());
+        let multiplicity = eval.next_trace_mask();
 
         // Add the trace column to the lookup relation with coefficient -1
         // This ensures that the sum of all lookups equals zero
         eval.add_to_relation(RelationEntry::new(
             &self.lookup_elements,
-            -E::EF::one(),
-            &[lookup_col_1],
+            -E::EF::from(multiplicity),
+            &[rc_col],
         ));
 
         eval.finalize_logup();
@@ -189,18 +190,16 @@ impl InteractionClaim {
         let log_size = trace.domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
         let mut col_gen = logup_gen.new_col();
+        let rc_col = RangeCheck::<Q>::gen_column_simd();
 
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             // Get the multiplicity value from the trace
-            let result_packed = trace.data[vec_row];
+            let multiplicity = PackedQM31::from(trace.data[vec_row]);
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.combine(&[rc_col.data[vec_row]]);
 
-            // The numerator is -1 (we want to check that the sum equals zero)
-            let numerator = -PackedQM31::one();
-
-            col_gen.write_frac(vec_row, numerator, denom);
+            col_gen.write_frac(vec_row, -multiplicity, denom);
         }
         col_gen.finalize_col();
 
