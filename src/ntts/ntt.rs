@@ -3,11 +3,7 @@ use stwo::{
     core::{
         ColumnVec,
         channel::Channel,
-        fields::{
-            m31::M31,
-            qm31::{SECURE_EXTENSION_DEGREE, SecureField},
-        },
-        pcs::TreeVec,
+        fields::{m31::M31, qm31::SecureField},
         poly::circle::CanonicCoset,
         utils::{bit_reverse, bit_reverse_index},
     },
@@ -31,15 +27,6 @@ pub struct Claim {
 }
 
 impl Claim {
-    /// Returns the log sizes for the traces.
-    ///
-    /// [preprocessed_trace, trace, interaction_trace]
-    pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
-        let trace_log_sizes = vec![self.log_size];
-        let interaction_log_sizes = vec![self.log_size; SECURE_EXTENSION_DEGREE];
-        TreeVec::new(vec![vec![], trace_log_sizes, interaction_log_sizes])
-    }
-
     pub fn mix_into(&self, channel: &mut impl Channel) {
         channel.mix_u64(self.log_size as u64);
     }
@@ -82,27 +69,34 @@ impl Claim {
                 .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
-        let mut remainders = Vec::with_capacity(3 * (1 << self.log_size));
-        for i in 0..(1 << (self.log_size - 1)) {
-            remainders.push(trace[i * 8 + 3]);
-            remainders.push(trace[i * 8 + 5]);
-            remainders.push(trace[i * 8 + 7]);
-        }
+
         let domain = CanonicCoset::new(self.log_size).circle_domain();
         let bit_reversed_0 = bit_reverse_index(0, self.log_size);
+        let trace = trace
+            .into_iter()
+            .map(|val| {
+                let mut col = vec![M31::zero(); 1 << self.log_size];
+                col[bit_reversed_0] = val;
+                col
+            })
+            .collect::<Vec<_>>();
+        let mut remainders = vec![];
+        for coeff in 0..(1 << (POLY_LOG_SIZE - 1)) {
+            for col in [3, 5, 7] {
+                remainders.push(trace[coeff * 8 + col].clone());
+            }
+        }
         (
             trace
                 .into_iter()
                 .map(|val| {
-                    let mut col = vec![M31::zero(); 1 << self.log_size];
-                    col[bit_reversed_0] = val;
                     CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
                         domain,
-                        BaseColumn::from_iter(col),
+                        BaseColumn::from_iter(val),
                     )
                 })
                 .collect::<Vec<_>>(),
-            remainders,
+            remainders.into_iter().flatten().collect(),
         )
     }
 }
@@ -203,21 +197,15 @@ impl InteractionClaim {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
 
-        // Interaction trace for the remainder
         for poly_coeff in 0..(1 << (POLY_LOG_SIZE - 1)) {
             for col in [3, 5, 7] {
                 let mut col_gen = logup_gen.new_col();
                 for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-                    // Get the remainder value from the trace (column 3)
+                    // only the packed row that contains the hot lane contributes
                     let result_packed = trace[poly_coeff * 8 + col].data[vec_row];
-
-                    // Create the denominator using the lookup elements
+                    // denom per-lane from the actual packed remainder
                     let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
-
-                    // The numerator is 1 (we want to check that remainder is in the range)
-                    let numerator = PackedQM31::one();
-
-                    col_gen.write_frac(vec_row, numerator, denom);
+                    col_gen.write_frac(vec_row, PackedQM31::one(), denom);
                 }
                 col_gen.finalize_col();
             }

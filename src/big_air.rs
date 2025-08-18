@@ -61,15 +61,6 @@ impl AllTraces {
 }
 
 impl BigClaim {
-    /// Returns the combined log sizes for all trace columns.
-    ///
-    /// Concatenates the log sizes from all four components to determine
-    /// the total trace structure.
-    pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
-        let trees = vec![self.ntt.log_sizes(), self.range_check.log_sizes()];
-        TreeVec::concat_cols(trees.into_iter())
-    }
-
     /// Mixes all claim parameters into the Fiat-Shamir channel.
     ///
     /// This ensures that the proof is deterministic and all components
