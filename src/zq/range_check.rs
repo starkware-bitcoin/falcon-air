@@ -149,7 +149,7 @@ impl FrameworkEval for Eval {
             &[range_check_col],
         ));
 
-        eval.finalize_logup_in_pairs();
+        eval.finalize_logup();
 
         eval
     }

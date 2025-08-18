@@ -106,7 +106,7 @@ impl Claim {
             .collect::<Vec<_>>();
         let domain = CanonicCoset::new(self.log_size).circle_domain();
         (
-            [a, b, quotient, remainder.clone()]
+            [a, b.clone(), quotient, remainder.clone()]
                 .into_iter()
                 .map(|col| {
                     CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
@@ -115,7 +115,7 @@ impl Claim {
                     )
                 })
                 .collect::<Vec<_>>(),
-            remainder,
+            remainder.into_iter().chain(b).collect::<Vec<_>>(),
         )
     }
 }
@@ -172,7 +172,7 @@ impl FrameworkEval for Eval {
             E::EF::one(),
             &[b],
         ));
-        eval.finalize_logup_in_pairs();
+        eval.finalize_logup();
         eval
     }
 }

@@ -148,7 +148,7 @@ impl FrameworkEval for Eval {
             E::EF::one(),
             &[remainder],
         ));
-        eval.finalize_logup_in_pairs();
+        eval.finalize_logup();
         eval
     }
 }
