@@ -21,6 +21,7 @@ use crate::{
     big_air::{claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements},
     ntts::{intt, ntt},
     poly::{euclidean_norm, mul, sub},
+    utils::hot_selector,
     zq::{Q, range_check},
 };
 
@@ -86,7 +87,12 @@ pub fn prove_falcon(
     let mut tree_builder = commitment_scheme.tree_builder();
     let range_check_preprocessed = range_check::RangeCheck::<Q>::gen_column_simd();
     let half_range_check_preprocessed = range_check::RangeCheck::<{ Q / 2 }>::gen_column_simd();
-    tree_builder.extend_evals([range_check_preprocessed, half_range_check_preprocessed]);
+    let hot_selector_preprocessed = hot_selector::HotSelector::gen_column_simd(POLY_LOG_SIZE);
+    tree_builder.extend_evals([
+        range_check_preprocessed,
+        half_range_check_preprocessed,
+        hot_selector_preprocessed,
+    ]);
     tree_builder.commit(channel);
 
     // Generate and commit to main traces
@@ -156,7 +162,16 @@ pub fn prove_falcon(
     let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
         range_check::RangeCheck::<Q>::id(),
         range_check::RangeCheck::<{ Q / 2 }>::id(),
+        hot_selector::HotSelector::id(),
     ]);
+    eprintln!(
+        "preprocessed IDs (allocator): {:?}",
+        &[
+            range_check::RangeCheck::<Q>::id(),
+            range_check::RangeCheck::<{ Q / 2 }>::id(),
+            hot_selector::HotSelector::id(),
+        ]
+    );
 
     // Generate the final STARK proof
     prove::<SimdBackend, _>(

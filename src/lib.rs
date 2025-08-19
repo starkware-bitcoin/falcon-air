@@ -16,6 +16,7 @@ pub mod big_air;
 pub mod debug;
 pub mod ntts;
 pub mod poly;
+pub mod utils;
 pub mod zq;
 
 pub const POLY_LOG_SIZE: u32 = 10;

@@ -489,16 +489,14 @@ impl FrameworkEval for Eval {
             res.push(i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder);
         }
 
+        let s = eval.get_preprocessed_column(crate::utils::hot_selector::HotSelector::id());
+
+        eprintln!("INTT requested HotSelector");
         bit_reverse(&mut res);
         res.into_iter().for_each(|x| {
             let output_col = eval.next_trace_mask();
-            eval.add_to_relation(RelationEntry::new(
-                &self.intt_lookup_elements,
-                -E::EF::one(),
-                &[output_col.clone()],
-            ));
-
-            eval.add_constraint(x - output_col);
+            // remove any add_to_relation here; interaction handles the LogUp link
+            eval.add_constraint(s.clone() * (x - output_col));
         });
 
         eval.finalize_logup();

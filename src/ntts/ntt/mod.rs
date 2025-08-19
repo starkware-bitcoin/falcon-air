@@ -420,14 +420,12 @@ impl FrameworkEval for Eval {
             }
         }
 
+        let s = eval.get_preprocessed_column(crate::utils::hot_selector::HotSelector::id());
+        eprintln!("NTT requested HotSelector");
         poly.last().unwrap()[0].clone().into_iter().for_each(|x| {
             let output_col = eval.next_trace_mask();
-            eval.add_to_relation(RelationEntry::new(
-                &self.ntt_lookup_elements,
-                -E::EF::one(),
-                &[output_col.clone()],
-            ));
-            eval.add_constraint(x - output_col);
+            // Only enforce where the one-hot lives
+            eval.add_constraint(s.clone() * (x - output_col));
         });
 
         eval.finalize_logup();
