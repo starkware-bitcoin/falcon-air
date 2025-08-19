@@ -24,14 +24,7 @@ use crate::{
         I2, ROOTS, SQ1,
         intt::split::{Split, SplitNTT},
     },
-    zq::{
-        Q,
-        add::{ADD_COL, AddMod},
-        inverses::INVERSES_MOD_Q,
-        mul::{MUL_COL, MulMod},
-        range_check,
-        sub::{SUB_COL, SubMod},
-    },
+    zq::{Q, add::AddMod, inverses::INVERSES_MOD_Q, mul::MulMod, range_check, sub::SubMod},
 };
 
 pub mod split;
@@ -86,10 +79,6 @@ impl Claim {
             2282, 11556, 5380, 1690,
         ]];
 
-        // Initialize remainder arrays for each operation type (MUL, ADD, SUB)
-        // These will be used for range checking during proof verification
-        let mut remainders = vec![vec![]; 3];
-        let mut flat_remainders = vec![];
         let mut trace = poly[0].to_vec();
 
         // Prepare data structures for the merging phase
@@ -117,8 +106,6 @@ impl Claim {
 
                     trace.push(f_even_plus_f_odd_quotient);
                     trace.push(f_even_plus_f_odd_remainder);
-                    remainders[ADD_COL].push(f_even_plus_f_odd_remainder);
-                    flat_remainders.push(f_even_plus_f_odd_remainder);
 
                     // (i2 * (f_ntt[2 * i] + f_ntt[2 * i + 1])) % q
                     let i2_times_f_even_plus_f_odd_quotient =
@@ -128,8 +115,6 @@ impl Claim {
 
                     trace.push(i2_times_f_even_plus_f_odd_quotient);
                     trace.push(i2_times_f_even_plus_f_odd_remainder);
-                    remainders[MUL_COL].push(i2_times_f_even_plus_f_odd_remainder);
-                    flat_remainders.push(i2_times_f_even_plus_f_odd_remainder);
 
                     // f_ntt[2 * i] - f_ntt[2 * i + 1]
                     let f_even_minus_f_odd_borrow = (*f_even < *f_odd) as u32;
@@ -138,9 +123,6 @@ impl Claim {
 
                     trace.push(f_even_minus_f_odd_borrow);
                     trace.push(f_even_minus_f_odd_remainder);
-                    remainders[SUB_COL].push(f_even_minus_f_odd_remainder);
-                    flat_remainders.push(f_even_minus_f_odd_remainder);
-
                     // i2 * (f_ntt[2 * i] - f_ntt[2 * i + 1])
                     let i2_times_f_even_minus_f_odd_quotient =
                         (I2 * f_even_minus_f_odd_remainder) / Q;
@@ -149,8 +131,6 @@ impl Claim {
 
                     trace.push(i2_times_f_even_minus_f_odd_quotient);
                     trace.push(i2_times_f_even_minus_f_odd_remainder);
-                    remainders[MUL_COL].push(i2_times_f_even_minus_f_odd_remainder);
-                    flat_remainders.push(i2_times_f_even_minus_f_odd_remainder);
 
                     // (i2 * (f_ntt[2 * i] - f_ntt[2 * i + 1]) * inv_mod_q[w[2 * i]]) % q
                     let i2_times_f_even_minus_f_odd_times_root_inv_quotient =
@@ -160,8 +140,6 @@ impl Claim {
 
                     trace.push(i2_times_f_even_minus_f_odd_times_root_inv_quotient);
                     trace.push(i2_times_f_even_minus_f_odd_times_root_inv_remainder);
-                    remainders[MUL_COL].push(i2_times_f_even_minus_f_odd_times_root_inv_remainder);
-                    flat_remainders.push(i2_times_f_even_minus_f_odd_times_root_inv_remainder);
 
                     f0_ntt.push(i2_times_f_even_plus_f_odd_remainder);
                     f1_ntt.push(i2_times_f_even_minus_f_odd_times_root_inv_remainder);
@@ -180,8 +158,6 @@ impl Claim {
 
             trace.push(f_ntt_0_plus_f_ntt_1_quotient);
             trace.push(f_ntt_0_plus_f_ntt_1_remainder);
-            remainders[ADD_COL].push(f_ntt_0_plus_f_ntt_1_remainder);
-            flat_remainders.push(f_ntt_0_plus_f_ntt_1_remainder);
 
             // (i2 * (f_ntt[0] + f_ntt[1])) % q
             let i2_times_f_ntt_0_plus_f_ntt_1_quotient = (I2 * f_ntt_0_plus_f_ntt_1_remainder) / Q;
@@ -190,8 +166,6 @@ impl Claim {
 
             trace.push(i2_times_f_ntt_0_plus_f_ntt_1_quotient);
             trace.push(i2_times_f_ntt_0_plus_f_ntt_1_remainder);
-            remainders[MUL_COL].push(i2_times_f_ntt_0_plus_f_ntt_1_remainder);
-            flat_remainders.push(i2_times_f_ntt_0_plus_f_ntt_1_remainder);
 
             // f_ntt[0] - f_ntt[1]
             let f_ntt_0_minus_f_ntt_1_quotient = (poly[0] < poly[1]) as u32;
@@ -200,8 +174,6 @@ impl Claim {
 
             trace.push(f_ntt_0_minus_f_ntt_1_quotient);
             trace.push(f_ntt_0_minus_f_ntt_1_remainder);
-            remainders[SUB_COL].push(f_ntt_0_minus_f_ntt_1_remainder);
-            flat_remainders.push(f_ntt_0_minus_f_ntt_1_remainder);
 
             let i2_times_inv_sq1 = (I2 * INVERSES_MOD_Q[SQ1 as usize]) % Q;
 
@@ -213,39 +185,39 @@ impl Claim {
 
             trace.push(i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_quotient);
             trace.push(i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder);
-            remainders[MUL_COL].push(i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder);
-            flat_remainders.push(i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder);
             debug_result.push(i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder);
         }
 
-        let trace = trace.into_iter().map(M31).collect::<Vec<_>>();
+        let bit_reversed_0 = bit_reverse_index(0, self.log_size);
+        let trace = trace
+            .into_iter()
+            .map(|val| {
+                let mut col = vec![M31::zero(); 1 << self.log_size];
+                col[bit_reversed_0] = M31(val);
+                col
+            })
+            .collect::<Vec<_>>();
+        let remainders = trace
+            .clone()
+            .into_iter()
+            .skip(POLY_SIZE as usize + 1)
+            .step_by(2);
 
         // Convert the trace values to circle evaluations for the proof system
         let domain = CanonicCoset::new(self.log_size).circle_domain();
-        let bit_reversed_0 = bit_reverse_index(0, self.log_size);
 
         (
             trace
                 .into_iter()
                 .map(|val| {
-                    // Create a column with the trace value at the bit-reversed index
-                    let mut col = vec![M31::zero(); 1 << self.log_size];
-                    col[bit_reversed_0] = val;
                     CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
                         domain,
-                        BaseColumn::from_iter(col),
+                        BaseColumn::from_iter(val),
                     )
                 })
                 .collect::<Vec<_>>(),
             // Convert remainder values to M31 field elements for range checking
-            remainders
-                .into_iter()
-                .map(|col| {
-                    col.into_iter()
-                        .map(M31::from_u32_unchecked)
-                        .collect::<Vec<_>>()
-                })
-                .collect(),
+            remainders.collect(),
         )
     }
 }
@@ -444,7 +416,7 @@ impl InteractionClaim {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
 
-        for col in (POLY_SIZE as usize + 1..trace.len()).step_by(2) {
+        for col in (POLY_SIZE as usize..trace.len()).skip(1).step_by(2) {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 // Access remainder columns from the merging phase
