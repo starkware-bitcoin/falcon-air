@@ -87,10 +87,6 @@ impl Claim {
             .map(|b| M31::from_u32_unchecked(*b))
             .collect::<Vec<_>>();
         let domain = CanonicCoset::new(self.log_size).circle_domain();
-        println!("a: {:?}", a[0]);
-        println!("b: {:?}", b[0]);
-        println!("quotient: {:?}", quotient[0]);
-        println!("remainder: {:?}", remainder[0]);
         (
             [a, b, quotient, remainder.clone()]
                 .into_iter()

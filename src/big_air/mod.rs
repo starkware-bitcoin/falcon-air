@@ -84,18 +84,12 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
 
     // Generate and commit to main traces
     let claim = BigClaim {
-        f_ntt: ntt::Claim {
-            log_size: POLY_LOG_SIZE,
-        },
-        g_ntt: ntt::Claim {
-            log_size: POLY_LOG_SIZE,
-        },
+        f_ntt: ntt::Claim { log_size: 4 },
+        g_ntt: ntt::Claim { log_size: 4 },
         mul: mul::Claim {
             log_size: POLY_LOG_SIZE,
         },
-        intt: intt::Claim {
-            log_size: POLY_LOG_SIZE,
-        },
+        intt: intt::Claim { log_size: 4 },
         range_check: range_check::Claim {
             log_size: range_check_log_size,
         },
@@ -133,65 +127,81 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
         range_check::RangeCheck12289::id(),
     ]);
 
+    let f_ntt_component = ntt::Component::new(
+        &mut tree_span_provider,
+        ntt::Eval {
+            claim: ntt::Claim { log_size: 4 },
+            rc_lookup_elements: lookup_elements.rc.clone(),
+            ntt_lookup_elements: lookup_elements.f_ntt.clone(),
+        },
+        interaction_claim.f_ntt.claimed_sum,
+    );
+    let g_ntt_component = ntt::Component::new(
+        &mut tree_span_provider,
+        ntt::Eval {
+            claim: ntt::Claim { log_size: 4 },
+            rc_lookup_elements: lookup_elements.rc.clone(),
+            ntt_lookup_elements: lookup_elements.g_ntt.clone(),
+        },
+        interaction_claim.g_ntt.claimed_sum,
+    );
+    let mul_component = mul::Component::new(
+        &mut tree_span_provider,
+        mul::Eval {
+            claim: mul::Claim {
+                log_size: POLY_LOG_SIZE,
+            },
+            rc_lookup_elements: lookup_elements.rc.clone(),
+            f_ntt_lookup_elements: lookup_elements.f_ntt.clone(),
+            g_ntt_lookup_elements: lookup_elements.g_ntt.clone(),
+            mul_lookup_elements: lookup_elements.mul.clone(),
+        },
+        interaction_claim.mul.claimed_sum,
+    );
+    let intt_component = intt::Component::new(
+        &mut tree_span_provider,
+        intt::Eval {
+            claim: intt::Claim { log_size: 4 },
+            rc_lookup_elements: lookup_elements.rc.clone(),
+            mul_lookup_elements: lookup_elements.mul.clone(),
+        },
+        interaction_claim.intt.claimed_sum,
+    );
+    let range_check_component = range_check::Component::new(
+        &mut tree_span_provider,
+        range_check::Eval {
+            claim: range_check::Claim {
+                log_size: range_check_log_size,
+            },
+            lookup_elements: lookup_elements.rc.clone(),
+        },
+        interaction_claim.range_check.claimed_sum,
+    );
+
+    #[cfg(test)]
+    {
+        use crate::relation_tracker::{BigAirComponents, track_and_summarize_big_air_relations};
+        let components = &BigAirComponents {
+            f_ntt: &f_ntt_component,
+            g_ntt: &g_ntt_component,
+            mul: &mul_component,
+            intt: &intt_component,
+            range_check: &range_check_component,
+        };
+        println!(
+            "summary: {:?}",
+            track_and_summarize_big_air_relations(&commitment_scheme, components)
+        );
+    }
+
     // Generate the final STARK proof
     prove::<SimdBackend, _>(
         &[
-            &ntt::Component::new(
-                &mut tree_span_provider,
-                ntt::Eval {
-                    claim: ntt::Claim {
-                        log_size: POLY_LOG_SIZE,
-                    },
-                    rc_lookup_elements: lookup_elements.rc.clone(),
-                    ntt_lookup_elements: lookup_elements.f_ntt.clone(),
-                },
-                interaction_claim.f_ntt.claimed_sum,
-            ),
-            &ntt::Component::new(
-                &mut tree_span_provider,
-                ntt::Eval {
-                    claim: ntt::Claim {
-                        log_size: POLY_LOG_SIZE,
-                    },
-                    rc_lookup_elements: lookup_elements.rc.clone(),
-                    ntt_lookup_elements: lookup_elements.g_ntt.clone(),
-                },
-                interaction_claim.g_ntt.claimed_sum,
-            ),
-            &mul::Component::new(
-                &mut tree_span_provider,
-                mul::Eval {
-                    claim: mul::Claim {
-                        log_size: POLY_LOG_SIZE,
-                    },
-                    rc_lookup_elements: lookup_elements.rc.clone(),
-                    f_ntt_lookup_elements: lookup_elements.f_ntt.clone(),
-                    g_ntt_lookup_elements: lookup_elements.g_ntt.clone(),
-                    mul_lookup_elements: lookup_elements.mul.clone(),
-                },
-                interaction_claim.mul.claimed_sum,
-            ),
-            &intt::Component::new(
-                &mut tree_span_provider,
-                intt::Eval {
-                    claim: intt::Claim {
-                        log_size: POLY_LOG_SIZE,
-                    },
-                    rc_lookup_elements: lookup_elements.rc.clone(),
-                    mul_lookup_elements: lookup_elements.mul.clone(),
-                },
-                interaction_claim.intt.claimed_sum,
-            ),
-            &range_check::Component::new(
-                &mut tree_span_provider,
-                range_check::Eval {
-                    claim: range_check::Claim {
-                        log_size: range_check_log_size,
-                    },
-                    lookup_elements: lookup_elements.rc.clone(),
-                },
-                interaction_claim.range_check.claimed_sum,
-            ),
+            &f_ntt_component,
+            &g_ntt_component,
+            &mul_component,
+            &intt_component,
+            &range_check_component,
         ],
         channel,
         commitment_scheme,
