@@ -125,7 +125,7 @@ impl<E: stwo_constraint_framework::EvalAtRow> SplitNTT<E> {
     /// - `f1`: Coefficients for the second smaller polynomial
     pub fn evaluate(
         self,
-        lookup_elements: &range_check::LookupElements,
+        lookup_elements: &range_check::RCLookupElements,
         eval: &mut E,
     ) -> (Vec<E::F>, Vec<E::F>) {
         // Perform split butterfly operations on each pair of coefficients

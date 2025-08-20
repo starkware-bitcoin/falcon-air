@@ -31,7 +31,7 @@ impl<E: stwo_constraint_framework::EvalAtRow> SubMod<E> {
         Self { a, b, borrow, r }
     }
 
-    pub fn evaluate(self, lookup_elements: &super::range_check::LookupElements, eval: &mut E) {
+    pub fn evaluate(self, lookup_elements: &super::range_check::RCLookupElements, eval: &mut E) {
         eval.add_constraint(
             self.a + self.borrow.clone() * E::F::from(M31(Q)) - self.b - self.r.clone(),
         );

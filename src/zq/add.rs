@@ -30,7 +30,7 @@ impl<E: stwo_constraint_framework::EvalAtRow> AddMod<E> {
         Self { a, b, q, r }
     }
 
-    pub fn evaluate(self, lookup_elements: &super::range_check::LookupElements, eval: &mut E) {
+    pub fn evaluate(self, lookup_elements: &super::range_check::RCLookupElements, eval: &mut E) {
         // Extract trace values
         eval.add_constraint(self.a + self.b - self.q * E::F::from(M31(Q)) - self.r.clone());
         // Now we need to check that the remainder is in the range [0, Q)

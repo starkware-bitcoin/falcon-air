@@ -33,7 +33,7 @@ use crate::{
     zq::{Q, mul::MulMod, range_check},
 };
 
-relation!(LookupElements, 1);
+relation!(MulLookupElements, 1);
 
 // This is a helper function for the prover to generate the trace for the mul component
 #[derive(Debug, Clone)]
@@ -87,10 +87,6 @@ impl Claim {
             .map(|b| M31::from_u32_unchecked(*b))
             .collect::<Vec<_>>();
         let domain = CanonicCoset::new(self.log_size).circle_domain();
-        println!("a: {:?}", a[0]);
-        println!("b: {:?}", b[0]);
-        println!("quotient: {:?}", quotient[0]);
-        println!("remainder: {:?}", remainder[0]);
         (
             [a, b, quotient, remainder.clone()]
                 .into_iter()
@@ -112,13 +108,13 @@ pub struct Eval {
     /// The claim parameters
     pub claim: Claim,
     /// Lookup elements for range checking
-    pub rc_lookup_elements: range_check::LookupElements,
+    pub rc_lookup_elements: range_check::RCLookupElements,
     /// Lookup elements for f_ntt
-    pub f_ntt_lookup_elements: ntt::LookupElements,
+    pub f_ntt_lookup_elements: ntt::NTTLookupElements,
     /// Lookup elements for g_ntt
-    pub g_ntt_lookup_elements: ntt::LookupElements,
+    pub g_ntt_lookup_elements: ntt::NTTLookupElements,
     /// Lookup elements for multiplication
-    pub mul_lookup_elements: LookupElements,
+    pub mul_lookup_elements: MulLookupElements,
 }
 
 impl FrameworkEval for Eval {
@@ -185,10 +181,10 @@ impl InteractionClaim {
     /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        rc_lookup_elements: &range_check::LookupElements,
-        f_ntt_lookup_elements: &ntt::LookupElements,
-        g_ntt_lookup_elements: &ntt::LookupElements,
-        mul_lookup_elements: &LookupElements,
+        rc_lookup_elements: &range_check::RCLookupElements,
+        f_ntt_lookup_elements: &ntt::NTTLookupElements,
+        g_ntt_lookup_elements: &ntt::NTTLookupElements,
+        mul_lookup_elements: &MulLookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,

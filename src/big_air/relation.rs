@@ -7,19 +7,19 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct LookupElements {
-    pub rc: range_check::LookupElements,
-    pub f_ntt: ntt::LookupElements,
-    pub g_ntt: ntt::LookupElements,
-    pub mul: mul::LookupElements,
+    pub rc: range_check::RCLookupElements,
+    pub f_ntt: ntt::NTTLookupElements,
+    pub g_ntt: ntt::NTTLookupElements,
+    pub mul: mul::MulLookupElements,
 }
 
 impl LookupElements {
     pub fn draw(channel: &mut impl Channel) -> Self {
         Self {
-            rc: range_check::LookupElements::draw(channel),
-            f_ntt: ntt::LookupElements::draw(channel),
-            g_ntt: ntt::LookupElements::draw(channel),
-            mul: mul::LookupElements::draw(channel),
+            rc: range_check::RCLookupElements::draw(channel),
+            f_ntt: ntt::NTTLookupElements::draw(channel),
+            g_ntt: ntt::NTTLookupElements::draw(channel),
+            mul: mul::MulLookupElements::draw(channel),
         }
     }
 }
