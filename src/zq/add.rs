@@ -15,6 +15,7 @@ use stwo_constraint_framework::RelationEntry;
 
 use crate::zq::Q;
 
+
 #[derive(Debug, Clone)]
 pub struct AddMod<E: stwo_constraint_framework::EvalAtRow> {
     pub a: E::F,
@@ -27,6 +28,7 @@ impl<E: stwo_constraint_framework::EvalAtRow> AddMod<E> {
     pub fn new(a: E::F, b: E::F, q: E::F, r: E::F) -> Self {
         Self { a, b, q, r }
     }
+
 
     pub fn evaluate(self, lookup_elements: &super::range_check::LookupElements, eval: &mut E) {
         // Extract trace values

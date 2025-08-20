@@ -193,14 +193,18 @@ impl InteractionClaim {
         let range_check_col = RangeCheck12289::gen_column_simd();
 
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+
             // Get the result value from the trace (column 2)
             let multiplicity = trace.data[vec_row];
+
 
             // Create the denominator using the lookup elements
             let denom: PackedQM31 = lookup_elements.combine(&[range_check_col.data[vec_row]]);
 
+
             // The numerator is 1 (we want to check that result is in the range)
             let numerator = -PackedQM31::from(multiplicity);
+
 
             col_gen.write_frac(vec_row, numerator, denom);
         }

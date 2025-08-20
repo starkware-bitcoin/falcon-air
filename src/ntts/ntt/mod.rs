@@ -111,7 +111,7 @@ impl Claim {
         // This ensures the polynomial is in the correct order for the butterfly operations
         bit_reverse(&mut poly);
         let bit_reversed_0 = bit_reverse_index(0, self.log_size);
-        let mut remainders_counter = 0;
+
 
         // Phase 1: Initial Butterfly Operations
         //
@@ -134,18 +134,18 @@ impl Claim {
                 // f1 * SQ1 = quotient * Q + remainder
                 let f1_times_sq1_quotient = (f1 * SQ1) / Q;
                 let f1_times_sq1_remainder = (f1 * SQ1) % Q;
-                remainders_counter += 1;
+
                 // Step 2: Add f0 to the remainder and decompose
                 // f0 + f1 * SQ1 = quotient * Q + remainder
                 let f0_plus_f1_times_sq1_quotient = (f0 + f1_times_sq1_remainder) / Q;
                 let f0_plus_f1_times_sq1_remainder = (f0 + f1_times_sq1_remainder) % Q;
-                remainders_counter += 1;
+
                 // Step 3: Subtract the remainder from f0 and decompose
                 // f0 - f1 * SQ1 = quotient * Q + remainder (with borrow handling)
                 let f0_minus_f1_times_sq1_quotient = (f0 < f1_times_sq1_remainder) as u32;
                 let f0_minus_f1_times_sq1_remainder =
                     (f0 + f0_minus_f1_times_sq1_quotient * Q - f1_times_sq1_remainder) % Q;
-                remainders_counter += 1;
+
                 [
                     f0,
                     f1,
@@ -174,6 +174,7 @@ impl Claim {
                 remainders.push(final_trace[poly_coeff * 8 + col].clone());
             }
         }
+
         // Prepare data structures for the merging phase
         let mut polys = vec![vec![]; POLY_LOG_SIZE as usize];
 
@@ -182,7 +183,9 @@ impl Claim {
         for [_, _, _, _, _, left, _, right] in trace.iter() {
             polys[0].push(vec![*left, *right]);
         }
+
         let mut trace = vec![];
+
 
         // Phase 2: Recursive Merging Operations
         //
@@ -213,9 +216,10 @@ impl Claim {
                     // f1_ntt[i] * w[2 * i] = quotient * Q + remainder
                     let root_times_f1_quotient = (*coeff_right * root) / Q;
                     let root_times_f1_remainder = (*coeff_right * root) % Q;
-                    remainders_counter += 1;
+
                     trace.push(root_times_f1_quotient);
                     trace.push(root_times_f1_remainder);
+
 
                     // Step 2: Add f0_ntt coefficient to the multiplied result
                     // f0_ntt[i] + f1_ntt[i] * w[2 * i] = quotient * Q + remainder
@@ -223,9 +227,10 @@ impl Claim {
                         (*coeff_left + root_times_f1_remainder) / Q;
                     let f0_plus_root_times_f1_remainder =
                         (*coeff_left + root_times_f1_remainder) % Q;
-                    remainders_counter += 1;
+
                     trace.push(f0_plus_root_times_f1_quotient);
                     trace.push(f0_plus_root_times_f1_remainder);
+
 
                     // Step 3: Subtract the multiplied result from f0_ntt coefficient
                     // f0_ntt[i] - f1_ntt[i] * w[2 * i] = quotient * Q + remainder (with borrow handling)
@@ -236,7 +241,7 @@ impl Claim {
                             % Q;
                     trace.push(f0_minus_root_times_f1_borrow);
                     trace.push(f0_minus_root_times_f1_remainder);
-                    remainders_counter += 1;
+
                     // Store the results for the next recursive level
                     merged_poly.push(f0_plus_root_times_f1_remainder);
                     merged_poly.push(f0_minus_root_times_f1_remainder);
@@ -244,6 +249,7 @@ impl Claim {
                 polys[i].push(merged_poly);
             }
         }
+
         let trace = trace.into_iter().map(|val| {
             let mut col = vec![M31::zero(); 1 << self.log_size];
             col[bit_reversed_0] = M31(val);
@@ -479,6 +485,7 @@ impl InteractionClaim {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
         // NTT output linking column moved to the end to match evaluation order
+
         // Phase 1: Interaction trace for the initial butterfly phase
         // Check remainder values from columns 3, 5, 7 of each 8-column group
         let first_ntt_size = 1 << (POLY_LOG_SIZE - 1);
@@ -492,6 +499,7 @@ impl InteractionClaim {
                     // Create the denominator using the lookup elements for range checking
                     let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
                     col_gen.write_frac(vec_row, PackedQM31::one(), denom);
+
                 }
                 col_gen.finalize_col();
             }
@@ -501,6 +509,7 @@ impl InteractionClaim {
         // Check remainder values from every other column in the merging phase
         let offset = first_ntt_size * 8;
         for col in (offset..trace.len() - POLY_SIZE).skip(1).step_by(2) {
+
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 // Access remainder columns from the merging phase

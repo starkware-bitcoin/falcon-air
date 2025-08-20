@@ -16,6 +16,7 @@ use crate::{
     POLY_LOG_SIZE,
     ntts::{intt, mul, ntt},
     relation_tracker::{BigAirComponents, track_and_summarize_big_air_relations},
+
     zq::{Q, range_check},
 };
 use itertools::{Itertools, chain};
@@ -361,6 +362,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
         &traces.range_check,
     );
     interaction_claim.mix_into(channel);
+
     // assert_eq!(
     //     interaction_claim.claimed_sum(),
     //     <QM31 as num_traits::Zero>::zero(),
@@ -375,6 +377,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
         range_check::RangeCheck12289::id(),
     ]);
+
     let f_ntt_component = ntt::Component::new(
         &mut tree_span_provider,
         ntt::Eval {

@@ -15,6 +15,7 @@ use stwo_constraint_framework::RelationEntry;
 
 use crate::zq::Q;
 
+
 #[derive(Debug, Clone)]
 pub struct MulMod<E: stwo_constraint_framework::EvalAtRow> {
     pub a: E::F,

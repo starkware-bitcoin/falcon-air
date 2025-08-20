@@ -47,6 +47,7 @@ use crate::{
         mul,
     },
     zq::{Q, add::AddMod, inverses::INVERSES_MOD_Q, mul::MulMod, range_check, sub::SubMod},
+
 };
 
 pub mod split;
@@ -149,6 +150,7 @@ impl Claim {
                     trace.push(f_even_plus_f_odd_quotient);
                     trace.push(f_even_plus_f_odd_remainder);
 
+
                     // Step 2: Apply scaling factor I2 to the sum
                     // I2 * (f_even[i] + f_odd[i]) where I2 = inv(2) mod q
                     let i2_times_f_even_plus_f_odd_quotient =
@@ -159,6 +161,7 @@ impl Claim {
                     trace.push(i2_times_f_even_plus_f_odd_quotient);
                     trace.push(i2_times_f_even_plus_f_odd_remainder);
 
+
                     // Step 3: Subtract odd from even coefficients
                     // f_even[i] - f_odd[i] (with borrow handling for modular subtraction)
                     let f_even_minus_f_odd_borrow = (*f_even < *f_odd) as u32;
@@ -167,6 +170,7 @@ impl Claim {
 
                     trace.push(f_even_minus_f_odd_borrow);
                     trace.push(f_even_minus_f_odd_remainder);
+
 
                     // Step 4: Apply scaling factor I2 to the difference
                     // I2 * (f_even[i] - f_odd[i])
@@ -177,6 +181,7 @@ impl Claim {
 
                     trace.push(i2_times_f_even_minus_f_odd_quotient);
                     trace.push(i2_times_f_even_minus_f_odd_remainder);
+
 
                     // Step 5: Multiply by inverse root of unity
                     // I2 * (f_even[i] - f_odd[i]) * inv_root[i] where inv_root[i] = 1/root[i]
@@ -272,23 +277,28 @@ impl Claim {
                 col[bit_reversed_0] = M31(val);
                 col
             }))
+
             .collect::<Vec<_>>();
 
         // Convert the trace values to circle evaluations for the proof system
         let domain = CanonicCoset::new(self.log_size).circle_domain();
 
+
         (
             trace
                 .into_iter()
                 .map(|val| {
+
                     CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
                         domain,
                         BaseColumn::from_iter(val),
+
                     )
                 })
                 .collect::<Vec<_>>(),
             // Convert remainder values to M31 field elements for range checking
             remainders.collect(),
+
         )
     }
 }
@@ -528,11 +538,14 @@ impl InteractionClaim {
             col_gen.finalize_col();
         }
 
+
         for col in (POLY_SIZE..trace.len() - POLY_SIZE).skip(1).step_by(2) {
+
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 // Access remainder columns from the merging phase
                 let result_packed = trace[col].data[vec_row];
+
                 // Create the denominator using the lookup elements for range checking
                 let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
 

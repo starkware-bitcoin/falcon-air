@@ -277,10 +277,3 @@ fn assert_component<E: FrameworkEval + Sync>(
         component.claimed_sum(),
     );
 }
-pub type Components<'a> = (
-    &'a FrameworkComponent<ntt::Eval>,
-    &'a FrameworkComponent<ntt::Eval>,
-    &'a FrameworkComponent<mul::Eval>,
-    &'a FrameworkComponent<intt::Eval>,
-    &'a FrameworkComponent<range_check::Eval>,
-);

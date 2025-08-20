@@ -26,6 +26,7 @@ use stwo::{
             m31::{LOG_N_LANES, PackedM31},
             qm31::PackedQM31,
         },
+
         poly::{BitReversedOrder, circle::CircleEvaluation},
     },
 };
@@ -217,7 +218,6 @@ impl InteractionClaim {
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             // Get the remainder value from the trace (column 3)
             let result_packed = trace[0].data[vec_row];
-
             for num in result_packed.to_array() {
                 let mut vals = [M31(0); 16];
                 vals[0] = num;
@@ -231,6 +231,7 @@ impl InteractionClaim {
 
                 col_gen.write_frac(vec_row, numerator, denom);
             }
+
         }
         col_gen.finalize_col();
         // g_ntt
@@ -251,6 +252,7 @@ impl InteractionClaim {
 
                 col_gen.write_frac(vec_row, numerator, denom);
             }
+
         }
         col_gen.finalize_col();
 
@@ -272,6 +274,7 @@ impl InteractionClaim {
 
                 col_gen.write_frac(vec_row, numerator, denom);
             }
+
         }
         col_gen.finalize_col();
 
