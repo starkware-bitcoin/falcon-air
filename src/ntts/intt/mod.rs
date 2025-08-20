@@ -46,14 +46,7 @@ use crate::{
         intt::split::{Split, SplitNTT},
         mul,
     },
-    zq::{
-        Q,
-        add::{ADD_COL, AddMod},
-        inverses::INVERSES_MOD_Q,
-        mul::{MUL_COL, MulMod},
-        range_check,
-        sub::{SUB_COL, SubMod},
-    },
+    zq::{Q, add::AddMod, inverses::INVERSES_MOD_Q, mul::MulMod, range_check, sub::SubMod},
 };
 
 pub mod split;
@@ -113,10 +106,6 @@ impl Claim {
         // This represents the polynomial that we want to convert back to coefficient form
         let poly = vec![poly];
 
-        // Initialize remainder arrays for each operation type (MUL, ADD, SUB)
-        // These will be used for range checking during proof verification
-        let mut remainders = vec![vec![]; 3];
-        let mut flat_remainders = vec![];
         let mut trace = poly[0].to_vec();
 
         // Prepare data structures for the recursive INTT computation
@@ -159,8 +148,6 @@ impl Claim {
 
                     trace.push(f_even_plus_f_odd_quotient);
                     trace.push(f_even_plus_f_odd_remainder);
-                    remainders[ADD_COL].push(f_even_plus_f_odd_remainder);
-                    flat_remainders.push(f_even_plus_f_odd_remainder);
 
                     // Step 2: Apply scaling factor I2 to the sum
                     // I2 * (f_even[i] + f_odd[i]) where I2 = inv(2) mod q
@@ -171,8 +158,6 @@ impl Claim {
 
                     trace.push(i2_times_f_even_plus_f_odd_quotient);
                     trace.push(i2_times_f_even_plus_f_odd_remainder);
-                    remainders[MUL_COL].push(i2_times_f_even_plus_f_odd_remainder);
-                    flat_remainders.push(i2_times_f_even_plus_f_odd_remainder);
 
                     // Step 3: Subtract odd from even coefficients
                     // f_even[i] - f_odd[i] (with borrow handling for modular subtraction)
@@ -182,8 +167,6 @@ impl Claim {
 
                     trace.push(f_even_minus_f_odd_borrow);
                     trace.push(f_even_minus_f_odd_remainder);
-                    remainders[SUB_COL].push(f_even_minus_f_odd_remainder);
-                    flat_remainders.push(f_even_minus_f_odd_remainder);
 
                     // Step 4: Apply scaling factor I2 to the difference
                     // I2 * (f_even[i] - f_odd[i])
@@ -194,8 +177,6 @@ impl Claim {
 
                     trace.push(i2_times_f_even_minus_f_odd_quotient);
                     trace.push(i2_times_f_even_minus_f_odd_remainder);
-                    remainders[MUL_COL].push(i2_times_f_even_minus_f_odd_remainder);
-                    flat_remainders.push(i2_times_f_even_minus_f_odd_remainder);
 
                     // Step 5: Multiply by inverse root of unity
                     // I2 * (f_even[i] - f_odd[i]) * inv_root[i] where inv_root[i] = 1/root[i]
@@ -206,8 +187,6 @@ impl Claim {
 
                     trace.push(i2_times_f_even_minus_f_odd_times_root_inv_quotient);
                     trace.push(i2_times_f_even_minus_f_odd_times_root_inv_remainder);
-                    remainders[MUL_COL].push(i2_times_f_even_minus_f_odd_times_root_inv_remainder);
-                    flat_remainders.push(i2_times_f_even_minus_f_odd_times_root_inv_remainder);
 
                     // Store the results for the next recursive level
                     f0_ntt.push(i2_times_f_even_plus_f_odd_remainder);
@@ -239,8 +218,6 @@ impl Claim {
 
             trace.push(f_ntt_0_plus_f_ntt_1_quotient);
             trace.push(f_ntt_0_plus_f_ntt_1_remainder);
-            remainders[ADD_COL].push(f_ntt_0_plus_f_ntt_1_remainder);
-            flat_remainders.push(f_ntt_0_plus_f_ntt_1_remainder);
 
             // Step 2: Apply scaling factor I2 to the sum
             // I2 * (f_ntt[0] + f_ntt[1]) where I2 = 1/2
@@ -250,8 +227,6 @@ impl Claim {
 
             trace.push(i2_times_f_ntt_0_plus_f_ntt_1_quotient);
             trace.push(i2_times_f_ntt_0_plus_f_ntt_1_remainder);
-            remainders[MUL_COL].push(i2_times_f_ntt_0_plus_f_ntt_1_remainder);
-            flat_remainders.push(i2_times_f_ntt_0_plus_f_ntt_1_remainder);
 
             // Step 3: Subtract the final two coefficients
             // f_ntt[0] - f_ntt[1] (with borrow handling)
@@ -261,8 +236,6 @@ impl Claim {
 
             trace.push(f_ntt_0_minus_f_ntt_1_quotient);
             trace.push(f_ntt_0_minus_f_ntt_1_remainder);
-            remainders[SUB_COL].push(f_ntt_0_minus_f_ntt_1_remainder);
-            flat_remainders.push(f_ntt_0_minus_f_ntt_1_remainder);
 
             // Step 4: Apply scaling factor I2 and inverse of SQ1 to the difference
             // I2 * inv_sq1 * (f_ntt[0] - f_ntt[1]) where inv_sq1 = 1/sq1
@@ -276,44 +249,48 @@ impl Claim {
 
             trace.push(i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_quotient);
             trace.push(i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder);
-            remainders[MUL_COL].push(i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder);
-            flat_remainders.push(i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder);
             debug_result.push(i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder);
         }
+
+        let bit_reversed_0 = bit_reverse_index(0, self.log_size);
+
+        let trace = trace
+            .into_iter()
+            .map(|val| {
+                let mut col = vec![M31::zero(); 1 << self.log_size];
+                col[bit_reversed_0] = M31(val);
+                col
+            })
+            .collect::<Vec<_>>();
+        let remainders = trace.clone().into_iter().skip(POLY_SIZE + 1).step_by(2);
 
         bit_reverse(&mut debug_result);
         let trace = trace
             .into_iter()
-            .chain(debug_result)
-            .map(M31)
+            .chain(debug_result.into_iter().map(|val| {
+                let mut col = vec![M31::zero(); 1 << self.log_size];
+                col[bit_reversed_0] = M31(val);
+                col
+            }))
             .collect::<Vec<_>>();
 
         // Convert the trace values to circle evaluations for the proof system
         let domain = CanonicCoset::new(self.log_size).circle_domain();
-        let bit_reversed_0 = bit_reverse_index(0, self.log_size);
+        let mut is_first = vec![M31(0); 1 << self.log_size];
+        is_first[bit_reversed_0] = M31(1);
 
         (
-            trace
-                .into_iter()
+            std::iter::once(is_first)
+                .chain(trace)
                 .map(|val| {
-                    // Create a column with the trace value at the bit-reversed index
-                    let mut col = vec![M31::zero(); 1 << self.log_size];
-                    col[bit_reversed_0] = val;
                     CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
                         domain,
-                        BaseColumn::from_iter(col),
+                        BaseColumn::from_iter(val),
                     )
                 })
                 .collect::<Vec<_>>(),
             // Convert remainder values to M31 field elements for range checking
-            remainders
-                .into_iter()
-                .map(|col| {
-                    col.into_iter()
-                        .map(M31::from_u32_unchecked)
-                        .collect::<Vec<_>>()
-                })
-                .collect(),
+            remainders.collect(),
         )
     }
 }
@@ -328,9 +305,9 @@ pub struct Eval {
     /// The claim parameters defining the INTT computation
     pub claim: Claim,
     /// Lookup elements for range checking modular arithmetic operations
-    pub rc_lookup_elements: range_check::LookupElements,
+    pub rc_lookup_elements: range_check::RCLookupElements,
     /// Lookup elements for NTT operations
-    pub mul_lookup_elements: mul::LookupElements,
+    pub mul_lookup_elements: mul::MulLookupElements,
 }
 
 impl FrameworkEval for Eval {
@@ -351,6 +328,7 @@ impl FrameworkEval for Eval {
     /// modular arithmetic operations are correctly verified through range checking.
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
         let mut poly = Vec::with_capacity(POLY_SIZE);
+        let is_first = eval.next_trace_mask();
         for _ in 0..(1 << (POLY_LOG_SIZE - 1)) {
             let f_even = eval.next_trace_mask();
             let f_odd = eval.next_trace_mask();
@@ -358,12 +336,12 @@ impl FrameworkEval for Eval {
             poly.push(f_odd.clone());
             eval.add_to_relation(RelationEntry::new(
                 &self.mul_lookup_elements,
-                E::EF::one(),
+                E::EF::from(is_first.clone()),
                 &[f_even],
             ));
             eval.add_to_relation(RelationEntry::new(
                 &self.mul_lookup_elements,
-                E::EF::one(),
+                E::EF::from(is_first.clone()),
                 &[f_odd],
             ));
         }
@@ -533,13 +511,16 @@ impl InteractionClaim {
     /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        rc_lookup_elements: &range_check::LookupElements,
-        mul_lookup_elements: &mul::LookupElements,
+        rc_lookup_elements: &range_check::RCLookupElements,
+        mul_lookup_elements: &mul::MulLookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
     ) {
         let log_size = trace[0].domain.log_size();
+        let is_first = trace[0].clone();
+        let trace = trace.iter().skip(1).collect::<Vec<_>>();
+
         let mut logup_gen = LogupTraceGenerator::new(log_size);
 
         for col in trace.iter().take(POLY_SIZE) {
@@ -547,17 +528,16 @@ impl InteractionClaim {
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 let v = col.data[vec_row]; // must have all lanes populated
                 let denom: PackedQM31 = mul_lookup_elements.combine(&[v]);
-                col_gen.write_frac(vec_row, PackedQM31::one(), denom);
+                col_gen.write_frac(vec_row, PackedQM31::from(is_first.data[vec_row]), denom);
             }
             col_gen.finalize_col();
         }
 
-        for col in (POLY_SIZE + 1..trace.len() - POLY_SIZE).step_by(2) {
+        for col in (POLY_SIZE..trace.len() - POLY_SIZE).skip(1).step_by(2) {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 // Access remainder columns from the merging phase
                 let result_packed = trace[col].data[vec_row];
-
                 // Create the denominator using the lookup elements for range checking
                 let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
 

@@ -73,7 +73,7 @@ impl RangeCheck12289 {
 //
 // This relation defines the lookup table used for range checking operations.
 // It connects the arithmetic components with the preprocessed range check column.
-relation!(LookupElements, 1);
+relation!(RCLookupElements, 1);
 
 // This is a helper function for the prover to generate the trace for the range_check component
 #[derive(Debug, Clone)]
@@ -125,7 +125,7 @@ pub struct Eval {
     /// The claim parameters
     pub claim: Claim,
     /// Lookup elements for range checking
-    pub lookup_elements: LookupElements,
+    pub lookup_elements: RCLookupElements,
 }
 
 impl FrameworkEval for Eval {
@@ -139,13 +139,14 @@ impl FrameworkEval for Eval {
 
     fn evaluate<E: EvalAtRow>(&self, mut eval: E) -> E {
         let lookup_col_1 = eval.next_trace_mask();
+        let range_check_col = eval.get_preprocessed_column(RangeCheck12289::id());
 
         // Add the trace column to the lookup relation with coefficient -1
         // This ensures that the sum of all lookups equals zero
         eval.add_to_relation(RelationEntry::new(
             &self.lookup_elements,
-            -E::EF::one(),
-            &[lookup_col_1],
+            -E::EF::from(lookup_col_1),
+            &[range_check_col],
         ));
 
         eval.finalize_logup();
@@ -181,7 +182,7 @@ impl InteractionClaim {
     /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
         trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
-        lookup_elements: &LookupElements,
+        lookup_elements: &RCLookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Self,
@@ -189,16 +190,17 @@ impl InteractionClaim {
         let log_size = trace.domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
         let mut col_gen = logup_gen.new_col();
+        let range_check_col = RangeCheck12289::gen_column_simd();
 
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            // Get the multiplicity value from the trace
-            let result_packed = trace.data[vec_row];
+            // Get the result value from the trace (column 2)
+            let multiplicity = trace.data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.combine(&[range_check_col.data[vec_row]]);
 
-            // The numerator is -1 (we want to check that the sum equals zero)
-            let numerator = -PackedQM31::one();
+            // The numerator is 1 (we want to check that result is in the range)
+            let numerator = -PackedQM31::from(multiplicity);
 
             col_gen.write_frac(vec_row, numerator, denom);
         }

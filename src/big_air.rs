@@ -15,6 +15,7 @@
 use crate::{
     POLY_LOG_SIZE,
     ntts::{intt, mul, ntt},
+    relation_tracker::{BigAirComponents, track_and_summarize_big_air_relations},
     zq::{Q, range_check},
 };
 use itertools::{Itertools, chain};
@@ -140,9 +141,15 @@ impl BigClaim {
         let (intt_trace, intt_remainders) = self
             .intt
             .gen_trace(mul_remainders.iter().map(|r| r.0).collect_vec());
-        let range_check_trace = self
-            .range_check
-            .gen_trace(&chain!(f_ntt_remainders, g_ntt_remainders, intt_remainders).collect_vec());
+        let range_check_trace = self.range_check.gen_trace(
+            &chain!(
+                f_ntt_remainders,
+                g_ntt_remainders,
+                [mul_remainders],
+                intt_remainders,
+            )
+            .collect_vec(),
+        );
         (
             chain!(
                 f_ntt_trace.clone(),
@@ -213,10 +220,10 @@ impl BigInteractionClaim {
     ///
     /// Returns the combined interaction traces and the big interaction claim.
     pub fn gen_interaction_trace(
-        rc_lookup_elements: &range_check::LookupElements,
-        f_ntt_lookup_elements: &ntt::LookupElements,
-        g_ntt_lookup_elements: &ntt::LookupElements,
-        mul_lookup_elements: &mul::LookupElements,
+        rc_lookup_elements: &range_check::RCLookupElements,
+        f_ntt_lookup_elements: &ntt::NTTLookupElements,
+        g_ntt_lookup_elements: &ntt::NTTLookupElements,
+        mul_lookup_elements: &mul::MulLookupElements,
         f_ntt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         g_ntt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         mul_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
@@ -321,23 +328,18 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
 
     // Generate and commit to main traces
     let claim = BigClaim {
-        f_ntt: ntt::Claim {
-            log_size: POLY_LOG_SIZE,
-        },
-        g_ntt: ntt::Claim {
-            log_size: POLY_LOG_SIZE,
-        },
+        f_ntt: ntt::Claim { log_size: 4 },
+        g_ntt: ntt::Claim { log_size: 4 },
         mul: mul::Claim {
             log_size: POLY_LOG_SIZE,
         },
-        intt: intt::Claim {
-            log_size: POLY_LOG_SIZE,
-        },
+        intt: intt::Claim { log_size: 4 },
         range_check: range_check::Claim {
             log_size: range_check_log_size,
         },
     };
     let (trace, traces) = claim.gen_trace();
+    println!("big trace: {:?}", trace.len());
     claim.mix_into(channel);
 
     let mut tree_builder = commitment_scheme.tree_builder();
@@ -348,10 +350,10 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     let interaction_pow = SimdBackend::grind(channel, 2);
     channel.mix_u64(interaction_pow);
 
-    let rc_relations = range_check::LookupElements::draw(channel);
-    let f_ntt_relations = ntt::LookupElements::draw(channel);
-    let g_ntt_relations = ntt::LookupElements::draw(channel);
-    let mul_relations = mul::LookupElements::draw(channel);
+    let rc_relations = range_check::RCLookupElements::draw(channel);
+    let f_ntt_relations = ntt::NTTLookupElements::draw(channel);
+    let g_ntt_relations = ntt::NTTLookupElements::draw(channel);
+    let mul_relations = mul::MulLookupElements::draw(channel);
 
     // Generate and commit to interaction traces
     let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
@@ -366,6 +368,11 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
         &traces.range_check,
     );
     interaction_claim.mix_into(channel);
+    assert_eq!(
+        interaction_claim.claimed_sum(),
+        <QM31 as num_traits::Zero>::zero(),
+        "invalid logup sum"
+    );
 
     let mut tree_builder = commitment_scheme.tree_builder();
     tree_builder.extend_evals(interaction_trace);
@@ -375,66 +382,78 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
         range_check::RangeCheck12289::id(),
     ]);
+    let f_ntt_component = ntt::Component::new(
+        &mut tree_span_provider,
+        ntt::Eval {
+            claim: ntt::Claim { log_size: 4 },
+            rc_lookup_elements: rc_relations.clone(),
+            ntt_lookup_elements: f_ntt_relations.clone(),
+        },
+        interaction_claim.f_ntt.claimed_sum,
+    );
+    let g_ntt_component = ntt::Component::new(
+        &mut tree_span_provider,
+        ntt::Eval {
+            claim: ntt::Claim { log_size: 4 },
+            rc_lookup_elements: rc_relations.clone(),
+            ntt_lookup_elements: g_ntt_relations.clone(),
+        },
+        interaction_claim.g_ntt.claimed_sum,
+    );
+    let mul_component = mul::Component::new(
+        &mut tree_span_provider,
+        mul::Eval {
+            claim: mul::Claim {
+                log_size: POLY_LOG_SIZE,
+            },
+            rc_lookup_elements: rc_relations.clone(),
+            f_ntt_lookup_elements: f_ntt_relations.clone(),
+            g_ntt_lookup_elements: g_ntt_relations.clone(),
+            mul_lookup_elements: mul_relations.clone(),
+        },
+        interaction_claim.mul.claimed_sum,
+    );
+    let intt_component = intt::Component::new(
+        &mut tree_span_provider,
+        intt::Eval {
+            claim: intt::Claim { log_size: 4 },
+            rc_lookup_elements: rc_relations.clone(),
+            mul_lookup_elements: mul_relations.clone(),
+        },
+        interaction_claim.intt.claimed_sum,
+    );
+    let range_check_component = range_check::Component::new(
+        &mut tree_span_provider,
+        range_check::Eval {
+            claim: range_check::Claim {
+                log_size: range_check_log_size,
+            },
+            lookup_elements: rc_relations.clone(),
+        },
+        interaction_claim.range_check.claimed_sum,
+    );
+
+    let components = &BigAirComponents {
+        f_ntt: &f_ntt_component,
+        g_ntt: &g_ntt_component,
+        mul: &mul_component,
+        intt: &intt_component,
+        range_check: &range_check_component,
+    };
+
+    println!(
+        "summary: {:?}",
+        track_and_summarize_big_air_relations(&commitment_scheme, components)
+    );
 
     // Generate the final STARK proof
     prove::<SimdBackend, _>(
         &[
-            &ntt::Component::new(
-                &mut tree_span_provider,
-                ntt::Eval {
-                    claim: ntt::Claim {
-                        log_size: POLY_LOG_SIZE,
-                    },
-                    rc_lookup_elements: rc_relations.clone(),
-                    ntt_lookup_elements: f_ntt_relations.clone(),
-                },
-                interaction_claim.f_ntt.claimed_sum,
-            ),
-            &ntt::Component::new(
-                &mut tree_span_provider,
-                ntt::Eval {
-                    claim: ntt::Claim {
-                        log_size: POLY_LOG_SIZE,
-                    },
-                    rc_lookup_elements: rc_relations.clone(),
-                    ntt_lookup_elements: g_ntt_relations.clone(),
-                },
-                interaction_claim.g_ntt.claimed_sum,
-            ),
-            &mul::Component::new(
-                &mut tree_span_provider,
-                mul::Eval {
-                    claim: mul::Claim {
-                        log_size: POLY_LOG_SIZE,
-                    },
-                    rc_lookup_elements: rc_relations.clone(),
-                    f_ntt_lookup_elements: f_ntt_relations.clone(),
-                    g_ntt_lookup_elements: g_ntt_relations.clone(),
-                    mul_lookup_elements: mul_relations.clone(),
-                },
-                interaction_claim.mul.claimed_sum,
-            ),
-            &intt::Component::new(
-                &mut tree_span_provider,
-                intt::Eval {
-                    claim: intt::Claim {
-                        log_size: POLY_LOG_SIZE,
-                    },
-                    rc_lookup_elements: rc_relations.clone(),
-                    mul_lookup_elements: mul_relations.clone(),
-                },
-                interaction_claim.intt.claimed_sum,
-            ),
-            &range_check::Component::new(
-                &mut tree_span_provider,
-                range_check::Eval {
-                    claim: range_check::Claim {
-                        log_size: range_check_log_size,
-                    },
-                    lookup_elements: rc_relations.clone(),
-                },
-                interaction_claim.range_check.claimed_sum,
-            ),
+            &f_ntt_component,
+            &g_ntt_component,
+            &mul_component,
+            &intt_component,
+            &range_check_component,
         ],
         channel,
         commitment_scheme,

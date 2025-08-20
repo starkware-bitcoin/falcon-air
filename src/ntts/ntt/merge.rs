@@ -108,7 +108,7 @@ impl<E: stwo_constraint_framework::EvalAtRow> MergeNTT<E> {
     /// Returns a vector of merged polynomial coefficients from the NTT computation
     pub fn evaluate(
         self,
-        lookup_elements: &range_check::LookupElements,
+        lookup_elements: &range_check::RCLookupElements,
         eval: &mut E,
     ) -> Vec<E::F> {
         // Perform merge butterfly operations on each pair of coefficients

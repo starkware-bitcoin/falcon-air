@@ -46,18 +46,12 @@ use crate::{
         ROOTS, SQ1,
         ntt::merge::{Merge, MergeNTT},
     },
-    zq::{
-        Q,
-        add::{ADD_COL, AddMod},
-        mul::{MUL_COL, MulMod},
-        range_check,
-        sub::{SUB_COL, SubMod},
-    },
+    zq::{Q, add::AddMod, mul::MulMod, range_check, sub::SubMod},
 };
 
 pub mod merge;
 
-relation!(LookupElements, 1);
+relation!(NTTLookupElements, 1);
 
 #[derive(Debug, Clone)]
 pub struct Claim {
@@ -116,10 +110,8 @@ impl Claim {
         // Apply bit-reversal permutation to prepare for in-place NTT computation
         // This ensures the polynomial is in the correct order for the butterfly operations
         bit_reverse(&mut poly);
-
-        // Initialize remainder arrays for each operation type (MUL, ADD, SUB)
-        // These will be used for range checking during proof verification
-        let mut remainders = vec![vec![]; 3];
+        let bit_reversed_0 = bit_reverse_index(0, self.log_size);
+        let mut remainders_counter = 0;
 
         // Phase 1: Initial Butterfly Operations
         //
@@ -142,23 +134,18 @@ impl Claim {
                 // f1 * SQ1 = quotient * Q + remainder
                 let f1_times_sq1_quotient = (f1 * SQ1) / Q;
                 let f1_times_sq1_remainder = (f1 * SQ1) % Q;
-
+                remainders_counter += 1;
                 // Step 2: Add f0 to the remainder and decompose
                 // f0 + f1 * SQ1 = quotient * Q + remainder
                 let f0_plus_f1_times_sq1_quotient = (f0 + f1_times_sq1_remainder) / Q;
                 let f0_plus_f1_times_sq1_remainder = (f0 + f1_times_sq1_remainder) % Q;
-
+                remainders_counter += 1;
                 // Step 3: Subtract the remainder from f0 and decompose
                 // f0 - f1 * SQ1 = quotient * Q + remainder (with borrow handling)
                 let f0_minus_f1_times_sq1_quotient = (f0 < f1_times_sq1_remainder) as u32;
                 let f0_minus_f1_times_sq1_remainder =
                     (f0 + f0_minus_f1_times_sq1_quotient * Q - f1_times_sq1_remainder) % Q;
-
-                // Store remainders for range checking
-                remainders[MUL_COL].push(f1_times_sq1_remainder);
-                remainders[ADD_COL].push(f0_plus_f1_times_sq1_remainder);
-                remainders[SUB_COL].push(f0_minus_f1_times_sq1_remainder);
-
+                remainders_counter += 1;
                 [
                     f0,
                     f1,
@@ -171,7 +158,22 @@ impl Claim {
                 ]
             })
             .collect::<Vec<_>>();
-
+        let final_trace = trace
+            .iter()
+            .flat_map(|coeff_row| {
+                coeff_row.iter().map(|value| {
+                    let mut col = vec![M31::zero(); 1 << self.log_size];
+                    col[bit_reversed_0] = M31(*value);
+                    col
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut remainders = vec![];
+        for poly_coeff in 0..(1 << (POLY_LOG_SIZE - 1)) {
+            for col in [3, 5, 7] {
+                remainders.push(final_trace[poly_coeff * 8 + col].clone());
+            }
+        }
         // Prepare data structures for the merging phase
         let mut polys = vec![vec![]; POLY_LOG_SIZE as usize];
 
@@ -180,9 +182,7 @@ impl Claim {
         for [_, _, _, _, _, left, _, right] in trace.iter() {
             polys[0].push(vec![*left, *right]);
         }
-
-        // Flatten the trace array for easier column-wise access
-        let mut trace = trace.into_flattened();
+        let mut trace = vec![];
 
         // Phase 2: Recursive Merging Operations
         //
@@ -213,10 +213,9 @@ impl Claim {
                     // f1_ntt[i] * w[2 * i] = quotient * Q + remainder
                     let root_times_f1_quotient = (*coeff_right * root) / Q;
                     let root_times_f1_remainder = (*coeff_right * root) % Q;
-
+                    remainders_counter += 1;
                     trace.push(root_times_f1_quotient);
                     trace.push(root_times_f1_remainder);
-                    remainders[MUL_COL].push(root_times_f1_remainder);
 
                     // Step 2: Add f0_ntt coefficient to the multiplied result
                     // f0_ntt[i] + f1_ntt[i] * w[2 * i] = quotient * Q + remainder
@@ -224,10 +223,9 @@ impl Claim {
                         (*coeff_left + root_times_f1_remainder) / Q;
                     let f0_plus_root_times_f1_remainder =
                         (*coeff_left + root_times_f1_remainder) % Q;
-
+                    remainders_counter += 1;
                     trace.push(f0_plus_root_times_f1_quotient);
                     trace.push(f0_plus_root_times_f1_remainder);
-                    remainders[ADD_COL].push(f0_plus_root_times_f1_remainder);
 
                     // Step 3: Subtract the multiplied result from f0_ntt coefficient
                     // f0_ntt[i] - f1_ntt[i] * w[2 * i] = quotient * Q + remainder (with borrow handling)
@@ -238,8 +236,7 @@ impl Claim {
                             % Q;
                     trace.push(f0_minus_root_times_f1_borrow);
                     trace.push(f0_minus_root_times_f1_remainder);
-                    remainders[SUB_COL].push(f0_minus_root_times_f1_remainder);
-
+                    remainders_counter += 1;
                     // Store the results for the next recursive level
                     merged_poly.push(f0_plus_root_times_f1_remainder);
                     merged_poly.push(f0_minus_root_times_f1_remainder);
@@ -247,38 +244,37 @@ impl Claim {
                 polys[i].push(merged_poly);
             }
         }
-        let trace = trace.into_iter().map(M31).collect::<Vec<_>>();
+        let trace = trace.into_iter().map(|val| {
+            let mut col = vec![M31::zero(); 1 << self.log_size];
+            col[bit_reversed_0] = M31(val);
+            col
+        });
+        let remainders = remainders
+            .into_iter()
+            .chain(trace.clone().skip(1).step_by(2));
 
         // Convert the trace values to circle evaluations for the proof system
         let domain = CanonicCoset::new(self.log_size).circle_domain();
-        let bit_reversed_0 = bit_reverse_index(0, self.log_size);
+        let mut is_first = vec![M31(0); 1 << self.log_size];
+        is_first[bit_reversed_0] = M31(1);
+
         (
-            trace
-                .into_iter()
-                .chain(
-                    polys.last().unwrap()[0]
-                        .iter()
-                        .map(|x| M31::from_u32_unchecked(*x)),
-                )
-                .map(|val| {
-                    // Create a column with the trace value at the bit-reversed index
+            std::iter::once(is_first)
+                .chain(final_trace)
+                .chain(trace)
+                .chain(polys.last().unwrap()[0].iter().map(|x| {
                     let mut col = vec![M31::zero(); 1 << self.log_size];
-                    col[bit_reversed_0] = val;
+                    col[bit_reversed_0] = M31(*x);
+                    col
+                }))
+                .map(|val| {
                     CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
                         domain,
-                        BaseColumn::from_iter(col),
+                        BaseColumn::from_iter(val),
                     )
                 })
                 .collect::<Vec<_>>(),
-            // Convert remainder values to M31 field elements for range checking
-            remainders
-                .into_iter()
-                .map(|col| {
-                    col.into_iter()
-                        .map(M31::from_u32_unchecked)
-                        .collect::<Vec<_>>()
-                })
-                .collect(),
+            remainders.collect(),
             polys.last().unwrap()[0].clone(),
         )
     }
@@ -298,9 +294,9 @@ pub struct Eval {
     /// The claim parameters defining the NTT computation
     pub claim: Claim,
     /// Lookup elements for range checking modular arithmetic operations
-    pub rc_lookup_elements: range_check::LookupElements,
+    pub rc_lookup_elements: range_check::RCLookupElements,
     /// Lookup elements for NTT operations
-    pub ntt_lookup_elements: LookupElements,
+    pub ntt_lookup_elements: NTTLookupElements,
 }
 
 impl FrameworkEval for Eval {
@@ -327,6 +323,7 @@ impl FrameworkEval for Eval {
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
         let sq1 = E::F::from(M31::from_u32_unchecked(SQ1));
         let mut base_f_ntt = Vec::with_capacity(POLY_SIZE);
+        let is_first = eval.next_trace_mask();
 
         // Phase 1: Evaluate initial butterfly operations
         // This corresponds to the first phase of trace generation
@@ -423,7 +420,7 @@ impl FrameworkEval for Eval {
             let output_col = eval.next_trace_mask();
             eval.add_to_relation(RelationEntry::new(
                 &self.ntt_lookup_elements,
-                -E::EF::one(),
+                -E::EF::from(is_first.clone()),
                 &[output_col.clone()],
             ));
             eval.add_constraint(x - output_col);
@@ -476,16 +473,17 @@ impl InteractionClaim {
     /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        rc_lookup_elements: &range_check::LookupElements,
-        ntt_lookup_elements: &LookupElements,
+        rc_lookup_elements: &range_check::RCLookupElements,
+        ntt_lookup_elements: &NTTLookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
     ) {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
+        let is_first = trace[0].clone();
+        let trace = trace.iter().skip(1).collect::<Vec<_>>();
         // NTT output linking column moved to the end to match evaluation order
-
         // Phase 1: Interaction trace for the initial butterfly phase
         // Check remainder values from columns 3, 5, 7 of each 8-column group
         let first_ntt_size = 1 << (POLY_LOG_SIZE - 1);
@@ -498,11 +496,7 @@ impl InteractionClaim {
 
                     // Create the denominator using the lookup elements for range checking
                     let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
-
-                    // The numerator is 1 (we want to check that remainder is in the range)
-                    let numerator = PackedQM31::one();
-
-                    col_gen.write_frac(vec_row, numerator, denom);
+                    col_gen.write_frac(vec_row, PackedQM31::one(), denom);
                 }
                 col_gen.finalize_col();
             }
@@ -510,8 +504,8 @@ impl InteractionClaim {
 
         // Phase 2: Interaction trace for the merging phase
         // Check remainder values from every other column in the merging phase
-        let offset = first_ntt_size * 8 + 1;
-        for col in (offset..trace.len() - POLY_SIZE).step_by(2) {
+        let offset = first_ntt_size * 8;
+        for col in (offset..trace.len() - POLY_SIZE).skip(1).step_by(2) {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 // Access remainder columns from the merging phase
@@ -534,12 +528,13 @@ impl InteractionClaim {
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 let v = col.data[vec_row]; // must have all lanes populated
                 let denom: PackedQM31 = ntt_lookup_elements.combine(&[v]);
-                col_gen.write_frac(vec_row, -PackedQM31::one(), denom);
+                col_gen.write_frac(vec_row, -PackedQM31::from(is_first.data[vec_row]), denom);
             }
             col_gen.finalize_col();
         }
 
         let (interaction_trace, claimed_sum) = logup_gen.finalize_last();
+
         (interaction_trace, InteractionClaim { claimed_sum })
     }
 }

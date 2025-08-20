@@ -62,10 +62,10 @@ pub fn assert_constraints() {
     // Interaction trace.
 
     let mut dummy_channel = Blake2sChannel::default();
-    let rc_relations = range_check::LookupElements::draw(&mut dummy_channel);
-    let f_ntt_relations = ntt::LookupElements::draw(&mut dummy_channel);
-    let g_ntt_relations = ntt::LookupElements::draw(&mut dummy_channel);
-    let mul_relations = mul::LookupElements::draw(&mut dummy_channel);
+    let rc_relations = range_check::RCLookupElements::draw(&mut dummy_channel);
+    let f_ntt_relations = ntt::NTTLookupElements::draw(&mut dummy_channel);
+    let g_ntt_relations = ntt::NTTLookupElements::draw(&mut dummy_channel);
+    let mul_relations = mul::MulLookupElements::draw(&mut dummy_channel);
     let mut tree_builder = commitment_scheme.tree_builder();
     let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
         &rc_relations,
