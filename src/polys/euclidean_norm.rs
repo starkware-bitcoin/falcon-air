@@ -68,6 +68,7 @@ impl Claim {
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<M31>,
+        Vec<M31>,
     ) {
         let mut borrows_s0 = s0
             .iter()
@@ -100,6 +101,8 @@ impl Claim {
         let mut is_not_first = vec![M31(1); POLY_SIZE];
         is_not_first[0] = M31(0);
         let domain = CanonicCoset::new(self.log_size).circle_domain();
+        let mut is_last = vec![M31(0); POLY_SIZE];
+        is_last[POLY_SIZE - 1] = M31(1);
         let mut s0 = s0
             .iter()
             .map(|a| M31::from_u32_unchecked(*a))
@@ -128,7 +131,6 @@ impl Claim {
             .map(|a| M31::from_u32_unchecked(*a))
             .collect::<Vec<_>>();
         bit_reverse_coset_to_circle_domain_order(&mut cum_sum);
-        bit_reverse_coset_to_circle_domain_order(&mut is_not_first);
         (
             [
                 s0,
@@ -137,8 +139,9 @@ impl Claim {
                 s1,
                 borrows_s1,
                 bitrev_remainders_s1,
-                cum_sum,
+                cum_sum.clone(),
                 is_not_first,
+                // is_last,
             ]
             .into_iter()
             .map(|col| {
@@ -149,6 +152,7 @@ impl Claim {
             })
             .collect::<Vec<_>>(),
             remainders,
+            cum_sum,
         )
     }
 }
@@ -162,6 +166,7 @@ pub struct Eval {
     pub half_rc_lookup_elements: RCLookupElements,
     /// Lookup elements for input
     pub s0_lookup_elements: SubLookupElements,
+    pub signature_bound_lookup_elements: RCLookupElements,
 }
 
 impl FrameworkEval for Eval {
@@ -181,10 +186,16 @@ impl FrameworkEval for Eval {
         let s1 = eval.next_trace_mask();
         let borrow_s1 = eval.next_trace_mask();
         let remainder_s1 = eval.next_trace_mask();
-
         let [cum_sum_prev, cum_sum_current] =
             eval.next_interaction_mask(ORIGINAL_TRACE_IDX, [-1, 0]);
         let is_not_first = eval.next_trace_mask();
+
+        // if it's the last row check if the signature is in the range
+        eval.add_to_relation(RelationEntry::new(
+            &self.signature_bound_lookup_elements,
+            E::EF::one(),
+            &[cum_sum_current.clone()],
+        ));
         eval.add_to_relation(RelationEntry::new(
             &self.half_rc_lookup_elements,
             E::EF::one(),
@@ -264,6 +275,7 @@ impl InteractionClaim {
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         half_rc_lookup_elements: &RCLookupElements,
         s0_lookup_elements: &SubLookupElements,
+        signature_bound_lookup_elements: &RCLookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
@@ -305,6 +317,14 @@ impl InteractionClaim {
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             let result_packed = trace[0].data[vec_row];
             let denom: PackedQM31 = s0_lookup_elements.combine(&[result_packed]);
+            let numerator = PackedQM31::one();
+            col_gen.write_frac(vec_row, numerator, denom);
+        }
+        col_gen.finalize_col();
+        let mut col_gen = logup_gen.new_col();
+        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+            let result_packed = trace[6].data[vec_row];
+            let denom: PackedQM31 = signature_bound_lookup_elements.combine(&[result_packed]);
             let numerator = PackedQM31::one();
             col_gen.write_frac(vec_row, numerator, denom);
         }

@@ -27,7 +27,7 @@ use crate::polys::sub;
 use crate::polys::{euclidean_norm, mul};
 use crate::zq::range_check::RangeCheck;
 use crate::zq::{Q, range_check};
-use crate::{POLY_LOG_SIZE, POLY_SIZE};
+use crate::{POLY_LOG_SIZE, POLY_SIZE, SIGNATURE_BOUND};
 
 pub fn assert_constraints(
     s1: &[u32; POLY_SIZE],
@@ -68,6 +68,9 @@ pub fn assert_constraints(
         half_range_check: range_check::Claim {
             log_size: range_check_log_size - 1,
         },
+        sig_bound_check: range_check::Claim {
+            log_size: SIGNATURE_BOUND.next_power_of_two().ilog2(),
+        },
         range_check: range_check::Claim {
             log_size: range_check_log_size,
         },
@@ -91,6 +94,7 @@ pub fn assert_constraints(
         &traces.sub,
         &traces.euclidean_norm,
         &traces.half_range_check,
+        &traces.sig_bound_check,
         &traces.range_check,
     );
     tree_builder.extend_evals(interaction_trace);
@@ -157,6 +161,7 @@ pub fn assert_constraints(
                 claim: claim.euclidean_norm,
                 half_rc_lookup_elements: lookup_elements.half_range_check.clone(),
                 s0_lookup_elements: lookup_elements.sub.clone(),
+                signature_bound_lookup_elements: lookup_elements.sig_bound_check.clone(),
             },
             interaction_claim.euclidean_norm.claimed_sum,
         ),
@@ -167,6 +172,14 @@ pub fn assert_constraints(
                 lookup_elements: lookup_elements.half_range_check.clone(),
             },
             interaction_claim.half_range_check.claimed_sum,
+        ),
+        &range_check::Component::new(
+            &mut tree_span_provider,
+            range_check::Eval::<SIGNATURE_BOUND> {
+                claim: claim.sig_bound_check,
+                lookup_elements: lookup_elements.sig_bound_check.clone(),
+            },
+            interaction_claim.sig_bound_check.claimed_sum,
         ),
         &range_check::Component::new(
             &mut tree_span_provider,
@@ -274,10 +287,21 @@ fn assert_components(
         &FrameworkComponent<sub::Eval>,
         &FrameworkComponent<euclidean_norm::Eval>,
         &FrameworkComponent<range_check::Eval<{ Q / 2 }>>,
+        &FrameworkComponent<range_check::Eval<SIGNATURE_BOUND>>,
         &FrameworkComponent<range_check::Eval<Q>>,
     ),
 ) {
-    let (f_ntt, g_ntt, mul, intt, sub, euclidean_norm, half_range_check, range_check) = components;
+    let (
+        f_ntt,
+        g_ntt,
+        mul,
+        intt,
+        sub,
+        euclidean_norm,
+        half_range_check,
+        sig_bound_check,
+        range_check,
+    ) = components;
     println!("f_ntt");
     assert_component(f_ntt, &trace);
     println!("g_ntt");
@@ -292,6 +316,8 @@ fn assert_components(
     assert_component(euclidean_norm, &trace);
     println!("half_range_check");
     assert_component(half_range_check, &trace);
+    println!("sig_bound_check");
+    assert_component(sig_bound_check, &trace);
     println!("range_check");
     assert_component(range_check, &trace);
 }

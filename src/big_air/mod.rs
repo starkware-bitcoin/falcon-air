@@ -16,8 +16,10 @@ pub mod claim;
 pub mod interaction_claim;
 pub mod relation;
 
+use std::cmp::max;
+
 use crate::{
-    POLY_LOG_SIZE, POLY_SIZE,
+    POLY_LOG_SIZE, POLY_SIZE, SIGNATURE_BOUND,
     big_air::{claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements},
     ntts::{intt, ntt},
     polys::{euclidean_norm, mul, sub},
@@ -69,15 +71,20 @@ pub fn prove_falcon(
 ) -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     // Use consistent trace size across all components
     let range_check_log_size = Q.ilog2() + 1;
+    let sig_bound_check_log_size = SIGNATURE_BOUND.next_power_of_two().ilog2();
 
     // Initialize Fiat-Shamir channel and commitment scheme
     let channel = &mut Blake2sChannel::default();
     let pcs_config = PcsConfig::default();
     pcs_config.mix_into(channel);
     let twiddles = SimdBackend::precompute_twiddles(
-        CanonicCoset::new(range_check_log_size + pcs_config.fri_config.log_blowup_factor + 1)
-            .circle_domain()
-            .half_coset,
+        CanonicCoset::new(
+            max(range_check_log_size, sig_bound_check_log_size)
+                + pcs_config.fri_config.log_blowup_factor
+                + 1,
+        )
+        .circle_domain()
+        .half_coset,
     );
 
     // Commit to preprocessed columns (range check table)
@@ -86,7 +93,13 @@ pub fn prove_falcon(
     let mut tree_builder = commitment_scheme.tree_builder();
     let range_check_preprocessed = range_check::RangeCheck::<Q>::gen_column_simd();
     let half_range_check_preprocessed = range_check::RangeCheck::<{ Q / 2 }>::gen_column_simd();
-    tree_builder.extend_evals([range_check_preprocessed, half_range_check_preprocessed]);
+    let sig_bound_check_preprocessed =
+        range_check::RangeCheck::<SIGNATURE_BOUND>::gen_column_simd();
+    tree_builder.extend_evals([
+        range_check_preprocessed,
+        half_range_check_preprocessed,
+        sig_bound_check_preprocessed,
+    ]);
     tree_builder.commit(channel);
 
     // Generate and commit to main traces
@@ -106,6 +119,9 @@ pub fn prove_falcon(
         half_range_check: range_check::Claim {
             log_size: range_check_log_size - 1,
         },
+        sig_bound_check: range_check::Claim {
+            log_size: sig_bound_check_log_size,
+        },
         range_check: range_check::Claim {
             log_size: range_check_log_size,
         },
@@ -114,7 +130,7 @@ pub fn prove_falcon(
     claim.mix_into(channel);
 
     let mut tree_builder = commitment_scheme.tree_builder();
-    tree_builder.extend_evals(trace.clone());
+    tree_builder.extend_evals(trace);
     tree_builder.commit(channel);
 
     // Generate proof of work and draw lookup relations
@@ -133,8 +149,10 @@ pub fn prove_falcon(
         &traces.sub,
         &traces.euclidean_norm,
         &traces.half_range_check,
+        &traces.sig_bound_check,
         &traces.range_check,
     );
+    drop(traces);
     interaction_claim.mix_into(channel);
 
     let mut tree_builder = commitment_scheme.tree_builder();
@@ -145,6 +163,7 @@ pub fn prove_falcon(
     let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
         range_check::RangeCheck::<Q>::id(),
         range_check::RangeCheck::<{ Q / 2 }>::id(),
+        range_check::RangeCheck::<SIGNATURE_BOUND>::id(),
     ]);
 
     let f_ntt_component = ntt::Component::new(
@@ -202,6 +221,7 @@ pub fn prove_falcon(
             claim: claim.euclidean_norm,
             half_rc_lookup_elements: lookup_elements.half_range_check.clone(),
             s0_lookup_elements: lookup_elements.sub.clone(),
+            signature_bound_lookup_elements: lookup_elements.sig_bound_check.clone(),
         },
         interaction_claim.euclidean_norm.claimed_sum,
     );
@@ -213,6 +233,14 @@ pub fn prove_falcon(
         },
         interaction_claim.half_range_check.claimed_sum,
     );
+    let sig_bound_check_component = range_check::Component::new(
+        &mut tree_span_provider,
+        range_check::Eval::<SIGNATURE_BOUND> {
+            claim: claim.sig_bound_check,
+            lookup_elements: lookup_elements.sig_bound_check.clone(),
+        },
+        interaction_claim.sig_bound_check.claimed_sum,
+    );
     let range_check_component = range_check::Component::new(
         &mut tree_span_provider,
         range_check::Eval::<Q> {
@@ -222,24 +250,25 @@ pub fn prove_falcon(
         interaction_claim.range_check.claimed_sum,
     );
 
-    #[cfg(test)]
-    {
-        use crate::relation_tracker::{BigAirComponents, track_and_summarize_big_air_relations};
-        let components = &BigAirComponents {
-            f_ntt: &f_ntt_component,
-            g_ntt: &g_ntt_component,
-            mul: &mul_component,
-            intt: &intt_component,
-            sub: &sub_component,
-            euclidean_norm: &euclidean_norm_component,
-            half_range_check: &half_range_check_component,
-            range_check: &range_check_component,
-        };
-        println!(
-            "summary: {:?}",
-            track_and_summarize_big_air_relations(&commitment_scheme, components)
-        );
-    }
+    // #[cfg(test)]
+    // {
+    //     use crate::relation_tracker::{BigAirComponents, track_and_summarize_big_air_relations};
+    //     let components = &BigAirComponents {
+    //         f_ntt: &f_ntt_component,
+    //         g_ntt: &g_ntt_component,
+    //         mul: &mul_component,
+    //         intt: &intt_component,
+    //         sub: &sub_component,
+    //         euclidean_norm: &euclidean_norm_component,
+    //         half_range_check: &half_range_check_component,
+    //         sig_bound_check: &sig_bound_check_component,
+    //         range_check: &range_check_component,
+    //     };
+    //     println!(
+    //         "summary: {:?}",
+    //         track_and_summarize_big_air_relations(&commitment_scheme, components)
+    //     );
+    // }
     assert_eq!(
         interaction_claim.claimed_sum(),
         QM31::zero(),
@@ -256,11 +285,13 @@ pub fn prove_falcon(
             &sub_component,
             &euclidean_norm_component,
             &half_range_check_component,
+            &sig_bound_check_component,
             &range_check_component,
         ],
         channel,
         commitment_scheme,
     )
+    // Err(ProvingError::ConstraintsNotSatisfied)
 }
 
 #[cfg(test)]

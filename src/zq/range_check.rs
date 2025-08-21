@@ -33,7 +33,7 @@ use stwo_constraint_framework::{
     preprocessed_columns::PreProcessedColumnId,
 };
 
-use crate::{big_air::relation::RCLookupElements, zq::Q};
+use crate::{SIGNATURE_BOUND, big_air::relation::RCLookupElements, zq::Q};
 
 #[derive(Debug, Clone)]
 pub struct RangeCheck<const Q: u32>;
@@ -190,7 +190,6 @@ impl InteractionClaim {
             // Get the result value from the trace (column 2)
             let multiplicity = trace.data[vec_row];
 
-            // Create the denominator using the lookup elements
             let denom: PackedQM31 = lookup_elements.combine(&[range_check_col.data[vec_row]]);
 
             // The numerator is 1 (we want to check that result is in the range)

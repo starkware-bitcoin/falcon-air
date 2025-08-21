@@ -1,4 +1,5 @@
 use crate::{
+    SIGNATURE_BOUND,
     big_air::relation::LookupElements,
     ntts::{intt, ntt},
     polys::{euclidean_norm, mul, sub},
@@ -32,6 +33,8 @@ pub struct BigInteractionClaim {
     pub euclidean_norm: euclidean_norm::InteractionClaim,
     /// Interaction claim for half range checking
     pub half_range_check: range_check::InteractionClaim,
+    /// Interaction claim for signature bound checking
+    pub sig_bound_check: range_check::InteractionClaim,
     /// Interaction claim for range checking
     pub range_check: range_check::InteractionClaim,
 }
@@ -46,6 +49,7 @@ impl BigInteractionClaim {
         self.sub.mix_into(channel);
         self.euclidean_norm.mix_into(channel);
         self.half_range_check.mix_into(channel);
+        self.sig_bound_check.mix_into(channel);
         self.range_check.mix_into(channel);
     }
 
@@ -61,6 +65,7 @@ impl BigInteractionClaim {
             + self.sub.claimed_sum
             + self.euclidean_norm.claimed_sum
             + self.half_range_check.claimed_sum
+            + self.sig_bound_check.claimed_sum
             + self.range_check.claimed_sum
     }
 
@@ -86,6 +91,7 @@ impl BigInteractionClaim {
         sub_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         euclidean_norm_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         half_range_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        sig_bound_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
         range_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     ) -> (
         Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
@@ -130,11 +136,17 @@ impl BigInteractionClaim {
                 euclidean_norm_trace,
                 &lookup_elements.half_range_check,
                 &lookup_elements.sub,
+                &lookup_elements.sig_bound_check,
             );
         let (half_range_check_interaction_trace, half_range_check_interaction_claim) =
             range_check::InteractionClaim::gen_interaction_trace::<{ Q / 2 }>(
                 half_range_check_trace,
                 &lookup_elements.half_range_check,
+            );
+        let (sig_bound_check_interaction_trace, sig_bound_check_interaction_claim) =
+            range_check::InteractionClaim::gen_interaction_trace::<SIGNATURE_BOUND>(
+                sig_bound_check_trace,
+                &lookup_elements.sig_bound_check,
             );
         let (range_check_interaction_trace, range_check_interaction_claim) =
             range_check::InteractionClaim::gen_interaction_trace::<Q>(
@@ -150,6 +162,7 @@ impl BigInteractionClaim {
                 sub_interaction_trace,
                 euclidean_norm_interaction_trace,
                 half_range_check_interaction_trace,
+                sig_bound_check_interaction_trace,
                 range_check_interaction_trace,
             )
             .collect_vec(),
@@ -161,6 +174,7 @@ impl BigInteractionClaim {
                 sub: sub_interaction_claim,
                 euclidean_norm: euclidean_norm_interaction_claim,
                 half_range_check: half_range_check_interaction_claim,
+                sig_bound_check: sig_bound_check_interaction_claim,
                 range_check: range_check_interaction_claim,
             },
         )

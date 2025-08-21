@@ -29,6 +29,8 @@ pub struct BigClaim {
     pub euclidean_norm: euclidean_norm::Claim,
     /// Claim for half range checking operations
     pub half_range_check: range_check::Claim,
+    /// Claim for signature bound checking operations
+    pub sig_bound_check: range_check::Claim,
     /// Claim for range checking operations
     pub range_check: range_check::Claim,
 }
@@ -49,6 +51,8 @@ pub struct AllTraces {
     pub euclidean_norm: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace column from half range checking: multiplicities
     pub half_range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    /// Trace column from signature bound checking: multiplicities
+    pub sig_bound_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     /// Trace column from range checking: multiplicities
     pub range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
 }
@@ -63,6 +67,7 @@ impl AllTraces {
         sub: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         euclidean_norm: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         half_range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        sig_bound_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
         range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     ) -> Self {
         Self {
@@ -72,8 +77,9 @@ impl AllTraces {
             intt,
             sub,
             euclidean_norm,
-            range_check,
             half_range_check,
+            sig_bound_check,
+            range_check,
         }
     }
 }
@@ -92,6 +98,7 @@ impl BigClaim {
             self.sub.log_sizes(),
             self.euclidean_norm.log_sizes(),
             self.half_range_check.log_sizes(),
+            self.sig_bound_check.log_sizes(),
             self.range_check.log_sizes(),
         ];
         TreeVec::concat_cols(trees.into_iter())
@@ -109,6 +116,7 @@ impl BigClaim {
         self.sub.mix_into(channel);
         self.euclidean_norm.mix_into(channel);
         self.half_range_check.mix_into(channel);
+        self.sig_bound_check.mix_into(channel);
         self.range_check.mix_into(channel);
     }
 
@@ -142,18 +150,20 @@ impl BigClaim {
             .intt
             .gen_trace(mul_remainders.iter().map(|r| r.0).collect_vec());
         let (sub_trace, sub_remainders) = self.sub.gen_trace(msg_point, &intt_output);
-        let (euclidean_norm_trace, euclidean_norm_remainders) = self.euclidean_norm.gen_trace(
-            &sub_remainders
-                .iter()
-                .map(|r| r.0)
-                .collect_vec()
-                .try_into()
-                .unwrap(),
-            s1,
-        );
+        let (euclidean_norm_trace, euclidean_norm_remainders, euclidean_norm_output) =
+            self.euclidean_norm.gen_trace(
+                &sub_remainders
+                    .iter()
+                    .map(|r| r.0)
+                    .collect_vec()
+                    .try_into()
+                    .unwrap(),
+                s1,
+            );
         let half_range_check_trace = self
             .half_range_check
             .gen_trace(&chain!([euclidean_norm_remainders]).collect_vec());
+        let sig_bound_check_trace = self.sig_bound_check.gen_trace(&[euclidean_norm_output]);
         let range_check_trace = self.range_check.gen_trace(
             &chain!(
                 f_ntt_remainders,
@@ -173,6 +183,7 @@ impl BigClaim {
                 sub_trace.clone(),
                 euclidean_norm_trace.clone(),
                 [half_range_check_trace.clone()],
+                [sig_bound_check_trace.clone()],
                 [range_check_trace.clone()]
             )
             .collect_vec(),
@@ -184,6 +195,7 @@ impl BigClaim {
                 sub_trace,
                 euclidean_norm_trace,
                 half_range_check_trace,
+                sig_bound_check_trace,
                 range_check_trace,
             ),
         )
