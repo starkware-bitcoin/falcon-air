@@ -22,6 +22,8 @@ use crate::{
     ntts::{intt, mul, ntt},
     zq::{Q, range_check},
 };
+use num_traits::Zero;
+use stwo::core::fields::qm31::QM31;
 
 use stwo::{
     core::{
@@ -193,6 +195,11 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
             track_and_summarize_big_air_relations(&commitment_scheme, components)
         );
     }
+    assert_eq!(
+        interaction_claim.claimed_sum(),
+        QM31::zero(),
+        "invalid logup sum"
+    );
 
     // Generate the final STARK proof
     prove::<SimdBackend, _>(

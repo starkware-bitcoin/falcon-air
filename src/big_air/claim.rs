@@ -112,9 +112,15 @@ impl BigClaim {
         let (intt_trace, intt_remainders) = self
             .intt
             .gen_trace(mul_remainders.iter().map(|r| r.0).collect_vec());
-        let range_check_trace = self
-            .range_check
-            .gen_trace(&chain!(f_ntt_remainders, g_ntt_remainders, intt_remainders).collect_vec());
+        let range_check_trace = self.range_check.gen_trace(
+            &chain!(
+                f_ntt_remainders,
+                g_ntt_remainders,
+                intt_remainders,
+                [mul_remainders]
+            )
+            .collect_vec(),
+        );
         (
             chain!(
                 f_ntt_trace.clone(),
