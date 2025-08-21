@@ -23,8 +23,8 @@ use crate::big_air::{
     claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements,
 };
 use crate::ntts::{intt, ntt};
-use crate::polys::mul;
 use crate::polys::sub;
+use crate::polys::{euclidean_norm, mul};
 use crate::zq::range_check::RangeCheck;
 use crate::zq::{Q, range_check};
 use crate::{POLY_LOG_SIZE, POLY_SIZE};
@@ -61,6 +61,9 @@ pub fn assert_constraints(
         sub: sub::Claim {
             log_size: POLY_LOG_SIZE,
         },
+        euclidean_norm: euclidean_norm::Claim {
+            log_size: POLY_LOG_SIZE,
+        },
         range_check: range_check::Claim {
             log_size: range_check_log_size,
         },
@@ -82,6 +85,7 @@ pub fn assert_constraints(
         &traces.mul,
         &traces.intt,
         &traces.sub,
+        &traces.euclidean_norm,
         &traces.range_check,
     );
     tree_builder.extend_evals(interaction_trace);
@@ -136,8 +140,18 @@ pub fn assert_constraints(
                 claim: claim.sub,
                 rc_lookup_elements: lookup_elements.rc.clone(),
                 intt_lookup_elements: lookup_elements.intt.clone(),
+                sub_lookup_elements: lookup_elements.sub.clone(),
             },
             interaction_claim.sub.claimed_sum,
+        ),
+        &euclidean_norm::Component::new(
+            &mut tree_span_provider,
+            euclidean_norm::Eval {
+                claim: claim.euclidean_norm,
+                half_rc_lookup_elements: lookup_elements.rc.clone(),
+                s0_lookup_elements: lookup_elements.sub.clone(),
+            },
+            interaction_claim.euclidean_norm.claimed_sum,
         ),
         &range_check::Component::new(
             &mut tree_span_provider,
@@ -243,10 +257,11 @@ fn assert_components(
         &FrameworkComponent<mul::Eval>,
         &FrameworkComponent<intt::Eval>,
         &FrameworkComponent<sub::Eval>,
+        &FrameworkComponent<euclidean_norm::Eval>,
         &FrameworkComponent<range_check::Eval<Q>>,
     ),
 ) {
-    let (f_ntt, g_ntt, mul, intt, sub, range_check) = components;
+    let (f_ntt, g_ntt, mul, intt, sub, euclidean_norm, range_check) = components;
     println!("f_ntt");
     assert_component(f_ntt, &trace);
     println!("g_ntt");
@@ -257,6 +272,8 @@ fn assert_components(
     assert_component(intt, &trace);
     println!("sub");
     assert_component(sub, &trace);
+    println!("euclidean_norm");
+    assert_component(euclidean_norm, &trace);
     println!("range_check");
     assert_component(range_check, &trace);
 }
