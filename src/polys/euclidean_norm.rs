@@ -127,7 +127,6 @@ impl Claim {
             .iter()
             .map(|a| M31::from_u32_unchecked(*a))
             .collect::<Vec<_>>();
-        println!("cum_sum: {:?}", cum_sum.last().unwrap());
         bit_reverse_coset_to_circle_domain_order(&mut cum_sum);
         bit_reverse_coset_to_circle_domain_order(&mut is_not_first);
         (
