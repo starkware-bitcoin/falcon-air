@@ -41,12 +41,12 @@ use stwo_constraint_framework::{
 
 use crate::{
     POLY_LOG_SIZE, POLY_SIZE,
+    big_air::relation::{INTTLookupElements, MulLookupElements, RCLookupElements},
     ntts::{
         I2, ROOTS, SQ1,
         intt::split::{Split, SplitNTT},
-        mul,
     },
-    zq::{Q, add::AddMod, inverses::INVERSES_MOD_Q, mul::MulMod, range_check, sub::SubMod},
+    zq::{Q, add::AddMod, inverses::INVERSES_MOD_Q, mul::MulMod, sub::SubMod},
 };
 
 pub mod split;
@@ -101,6 +101,7 @@ impl Claim {
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<Vec<M31>>,
+        Vec<u32>,
     ) {
         // Initialize with the NTT output polynomial (already in evaluation form)
         // This represents the polynomial that we want to convert back to coefficient form
@@ -267,7 +268,7 @@ impl Claim {
         bit_reverse(&mut debug_result);
         let trace = trace
             .into_iter()
-            .chain(debug_result.into_iter().map(|val| {
+            .chain(debug_result.clone().into_iter().map(|val| {
                 let mut col = vec![M31::zero(); 1 << self.log_size];
                 col[bit_reversed_0] = M31(val);
                 col
@@ -291,6 +292,7 @@ impl Claim {
                 .collect::<Vec<_>>(),
             // Convert remainder values to M31 field elements for range checking
             remainders.collect(),
+            debug_result,
         )
     }
 }
@@ -305,9 +307,11 @@ pub struct Eval {
     /// The claim parameters defining the INTT computation
     pub claim: Claim,
     /// Lookup elements for range checking modular arithmetic operations
-    pub rc_lookup_elements: range_check::RCLookupElements,
+    pub rc_lookup_elements: RCLookupElements,
     /// Lookup elements for NTT operations
-    pub mul_lookup_elements: mul::MulLookupElements,
+    pub mul_lookup_elements: MulLookupElements,
+    /// Lookup elements for INTT output
+    pub intt_lookup_elements: INTTLookupElements,
 }
 
 impl FrameworkEval for Eval {
@@ -465,8 +469,12 @@ impl FrameworkEval for Eval {
         bit_reverse(&mut res);
         res.into_iter().for_each(|x| {
             let output_col = eval.next_trace_mask();
-
-            eval.add_constraint(x - output_col);
+            eval.add_constraint(x - output_col.clone());
+            eval.add_to_relation(RelationEntry::new(
+                &self.intt_lookup_elements,
+                -E::EF::from(is_first.clone()),
+                &[output_col],
+            ));
         });
 
         eval.finalize_logup();
@@ -511,8 +519,9 @@ impl InteractionClaim {
     /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        rc_lookup_elements: &range_check::RCLookupElements,
-        mul_lookup_elements: &mul::MulLookupElements,
+        rc_lookup_elements: &RCLookupElements,
+        mul_lookup_elements: &MulLookupElements,
+        intt_lookup_elements: &INTTLookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
@@ -522,7 +531,7 @@ impl InteractionClaim {
         let trace = trace.iter().skip(1).collect::<Vec<_>>();
 
         let mut logup_gen = LogupTraceGenerator::new(log_size);
-
+        // input linking
         for col in trace.iter().take(POLY_SIZE) {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
@@ -532,7 +541,7 @@ impl InteractionClaim {
             }
             col_gen.finalize_col();
         }
-
+        // range check
         for col in (POLY_SIZE..trace.len() - POLY_SIZE).skip(1).step_by(2) {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
@@ -545,6 +554,17 @@ impl InteractionClaim {
                 let numerator = PackedQM31::one();
 
                 col_gen.write_frac(vec_row, numerator, denom);
+            }
+            col_gen.finalize_col();
+        }
+
+        // output linking
+        for col in trace[trace.len() - POLY_SIZE..].iter() {
+            let mut col_gen = logup_gen.new_col();
+            for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+                let v = col.data[vec_row]; // must have all lanes populated
+                let denom: PackedQM31 = intt_lookup_elements.combine(&[v]);
+                col_gen.write_frac(vec_row, -PackedQM31::from(is_first.data[vec_row]), denom);
             }
             col_gen.finalize_col();
         }

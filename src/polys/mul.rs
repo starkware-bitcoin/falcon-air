@@ -25,15 +25,13 @@ use stwo::{
     },
 };
 use stwo_constraint_framework::{
-    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry, relation,
+    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry,
 };
 
 use crate::{
-    ntts::ntt,
-    zq::{Q, mul::MulMod, range_check},
+    big_air::relation::{MulLookupElements, NTTLookupElements, RCLookupElements},
+    zq::{Q, mul::MulMod},
 };
-
-relation!(MulLookupElements, 1);
 
 // This is a helper function for the prover to generate the trace for the mul component
 #[derive(Debug, Clone)]
@@ -108,11 +106,11 @@ pub struct Eval {
     /// The claim parameters
     pub claim: Claim,
     /// Lookup elements for range checking
-    pub rc_lookup_elements: range_check::RCLookupElements,
+    pub rc_lookup_elements: RCLookupElements,
     /// Lookup elements for f_ntt
-    pub f_ntt_lookup_elements: ntt::NTTLookupElements,
+    pub f_ntt_lookup_elements: NTTLookupElements,
     /// Lookup elements for g_ntt
-    pub g_ntt_lookup_elements: ntt::NTTLookupElements,
+    pub g_ntt_lookup_elements: NTTLookupElements,
     /// Lookup elements for multiplication
     pub mul_lookup_elements: MulLookupElements,
 }
@@ -181,9 +179,9 @@ impl InteractionClaim {
     /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        rc_lookup_elements: &range_check::RCLookupElements,
-        f_ntt_lookup_elements: &ntt::NTTLookupElements,
-        g_ntt_lookup_elements: &ntt::NTTLookupElements,
+        rc_lookup_elements: &RCLookupElements,
+        f_ntt_lookup_elements: &NTTLookupElements,
+        g_ntt_lookup_elements: &NTTLookupElements,
         mul_lookup_elements: &MulLookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,

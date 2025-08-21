@@ -37,21 +37,20 @@ use stwo::{
     },
 };
 use stwo_constraint_framework::{
-    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry, relation,
+    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry,
 };
 
 use crate::{
     POLY_LOG_SIZE, POLY_SIZE,
+    big_air::relation::{NTTLookupElements, RCLookupElements},
     ntts::{
         ROOTS, SQ1,
         ntt::merge::{Merge, MergeNTT},
     },
-    zq::{Q, add::AddMod, mul::MulMod, range_check, sub::SubMod},
+    zq::{Q, add::AddMod, mul::MulMod, sub::SubMod},
 };
 
 pub mod merge;
-
-relation!(NTTLookupElements, 1);
 
 #[derive(Debug, Clone)]
 pub struct Claim {
@@ -99,13 +98,14 @@ impl Claim {
     #[allow(clippy::type_complexity)]
     pub fn gen_trace(
         &self,
+        poly: &[u32; POLY_SIZE],
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<Vec<M31>>,
         Vec<u32>,
     ) {
         // Initialize the input polynomial with values [1, 2, ..., POLY_SIZE]
-        let mut poly = (1..POLY_SIZE as u32 + 1).collect::<Vec<_>>();
+        let mut poly = poly.to_vec();
 
         // Apply bit-reversal permutation to prepare for in-place NTT computation
         // This ensures the polynomial is in the correct order for the butterfly operations
@@ -294,7 +294,7 @@ pub struct Eval {
     /// The claim parameters defining the NTT computation
     pub claim: Claim,
     /// Lookup elements for range checking modular arithmetic operations
-    pub rc_lookup_elements: range_check::RCLookupElements,
+    pub rc_lookup_elements: RCLookupElements,
     /// Lookup elements for NTT operations
     pub ntt_lookup_elements: NTTLookupElements,
 }
@@ -418,12 +418,12 @@ impl FrameworkEval for Eval {
 
         poly.last().unwrap()[0].clone().into_iter().for_each(|x| {
             let output_col = eval.next_trace_mask();
+            eval.add_constraint(x - output_col.clone());
             eval.add_to_relation(RelationEntry::new(
                 &self.ntt_lookup_elements,
                 -E::EF::from(is_first.clone()),
-                &[output_col.clone()],
+                &[output_col],
             ));
-            eval.add_constraint(x - output_col);
         });
 
         eval.finalize_logup();
@@ -473,7 +473,7 @@ impl InteractionClaim {
     /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        rc_lookup_elements: &range_check::RCLookupElements,
+        rc_lookup_elements: &RCLookupElements,
         ntt_lookup_elements: &NTTLookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,

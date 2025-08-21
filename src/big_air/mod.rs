@@ -17,9 +17,10 @@ pub mod interaction_claim;
 pub mod relation;
 
 use crate::{
-    POLY_LOG_SIZE,
+    POLY_LOG_SIZE, POLY_SIZE,
     big_air::{claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements},
-    ntts::{intt, mul, ntt},
+    ntts::{intt, ntt},
+    polys::{mul, sub},
     zq::{Q, range_check},
 };
 use num_traits::Zero;
@@ -32,8 +33,7 @@ use stwo::{
         poly::circle::CanonicCoset,
         proof::StarkProof,
         proof_of_work::GrindOps,
-        vcs::blake2_merkle::Blake2sMerkleChannel,
-        vcs::blake2_merkle::Blake2sMerkleHasher,
+        vcs::blake2_merkle::{Blake2sMerkleChannel, Blake2sMerkleHasher},
     },
     prover::{
         CommitmentSchemeProver, ProvingError, backend::simd::SimdBackend, poly::circle::PolyOps,
@@ -62,7 +62,11 @@ use stwo_constraint_framework::TraceLocationAllocator;
 ///
 /// Returns `ProvingError` if any step in the proof generation fails,
 /// such as constraint violations or commitment failures.
-pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
+pub fn prove_falcon(
+    s1: &[u32; POLY_SIZE],
+    pk: &[u32; POLY_SIZE],
+    msg_point: &[u32; POLY_SIZE],
+) -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     // Use consistent trace size across all components
     let range_check_log_size = Q.ilog2() + 1;
 
@@ -80,7 +84,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     let mut commitment_scheme =
         CommitmentSchemeProver::<SimdBackend, Blake2sMerkleChannel>::new(pcs_config, &twiddles);
     let mut tree_builder = commitment_scheme.tree_builder();
-    let range_check_preprocessed = range_check::RangeCheck12289::gen_column_simd();
+    let range_check_preprocessed = range_check::RangeCheck::<Q>::gen_column_simd();
     tree_builder.extend_evals([range_check_preprocessed]);
     tree_builder.commit(channel);
 
@@ -92,11 +96,14 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
             log_size: POLY_LOG_SIZE,
         },
         intt: intt::Claim { log_size: 4 },
+        sub: sub::Claim {
+            log_size: POLY_LOG_SIZE,
+        },
         range_check: range_check::Claim {
             log_size: range_check_log_size,
         },
     };
-    let (trace, traces) = claim.gen_trace();
+    let (trace, traces) = claim.gen_trace(s1, pk, msg_point);
     claim.mix_into(channel);
 
     let mut tree_builder = commitment_scheme.tree_builder();
@@ -116,6 +123,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
         &traces.g_ntt,
         &traces.mul,
         &traces.intt,
+        &traces.sub,
         &traces.range_check,
     );
     interaction_claim.mix_into(channel);
@@ -126,13 +134,13 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
 
     // Set up trace location allocator with preprocessed columns
     let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
-        range_check::RangeCheck12289::id(),
+        range_check::RangeCheck::<Q>::id(),
     ]);
 
     let f_ntt_component = ntt::Component::new(
         &mut tree_span_provider,
         ntt::Eval {
-            claim: ntt::Claim { log_size: 4 },
+            claim: claim.f_ntt,
             rc_lookup_elements: lookup_elements.rc.clone(),
             ntt_lookup_elements: lookup_elements.f_ntt.clone(),
         },
@@ -141,7 +149,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     let g_ntt_component = ntt::Component::new(
         &mut tree_span_provider,
         ntt::Eval {
-            claim: ntt::Claim { log_size: 4 },
+            claim: claim.g_ntt,
             rc_lookup_elements: lookup_elements.rc.clone(),
             ntt_lookup_elements: lookup_elements.g_ntt.clone(),
         },
@@ -150,9 +158,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     let mul_component = mul::Component::new(
         &mut tree_span_provider,
         mul::Eval {
-            claim: mul::Claim {
-                log_size: POLY_LOG_SIZE,
-            },
+            claim: claim.mul,
             rc_lookup_elements: lookup_elements.rc.clone(),
             f_ntt_lookup_elements: lookup_elements.f_ntt.clone(),
             g_ntt_lookup_elements: lookup_elements.g_ntt.clone(),
@@ -163,18 +169,26 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     let intt_component = intt::Component::new(
         &mut tree_span_provider,
         intt::Eval {
-            claim: intt::Claim { log_size: 4 },
+            claim: claim.intt,
             rc_lookup_elements: lookup_elements.rc.clone(),
             mul_lookup_elements: lookup_elements.mul.clone(),
+            intt_lookup_elements: lookup_elements.intt.clone(),
         },
         interaction_claim.intt.claimed_sum,
     );
+    let sub_component = sub::Component::new(
+        &mut tree_span_provider,
+        sub::Eval {
+            claim: claim.sub,
+            rc_lookup_elements: lookup_elements.rc.clone(),
+            intt_lookup_elements: lookup_elements.intt.clone(),
+        },
+        interaction_claim.sub.claimed_sum,
+    );
     let range_check_component = range_check::Component::new(
         &mut tree_span_provider,
-        range_check::Eval {
-            claim: range_check::Claim {
-                log_size: range_check_log_size,
-            },
+        range_check::Eval::<Q> {
+            claim: claim.range_check,
             lookup_elements: lookup_elements.rc.clone(),
         },
         interaction_claim.range_check.claimed_sum,
@@ -188,6 +202,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
             g_ntt: &g_ntt_component,
             mul: &mul_component,
             intt: &intt_component,
+            sub: &sub_component,
             range_check: &range_check_component,
         };
         println!(
@@ -208,6 +223,7 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
             &g_ntt_component,
             &mul_component,
             &intt_component,
+            &sub_component,
             &range_check_component,
         ],
         channel,
@@ -218,7 +234,10 @@ pub fn prove_falcon() -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::debug;
+    use crate::{
+        debug,
+        input::{MSG_POINT, PK, TEST_S1},
+    };
 
     /// Tests the complete STARK proof generation for all arithmetic operations.
     ///
@@ -228,7 +247,7 @@ mod tests {
     /// - The proof can be generated without errors
     #[test]
     fn test_prove_falcon() {
-        match prove_falcon() {
+        match prove_falcon(TEST_S1, PK, MSG_POINT) {
             Ok(_) => println!("Proof generation successful!"),
             Err(e) => {
                 eprintln!("Proof generation failed: {:?}", e);
@@ -239,6 +258,6 @@ mod tests {
 
     #[test]
     fn test_debug_constraints() {
-        debug::assert_constraints();
+        debug::assert_constraints(TEST_S1, PK, MSG_POINT);
     }
 }

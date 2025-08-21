@@ -16,7 +16,10 @@
 //!
 //! where I2 = 1/2 and inv_root[i] is the inverse of the appropriate root of unity.
 
-use crate::zq::{add::AddMod, mul::MulMod, range_check, sub::SubMod};
+use crate::{
+    big_air::relation::RCLookupElements,
+    zq::{add::AddMod, mul::MulMod, sub::SubMod},
+};
 
 /// Collection of split operations for INTT polynomial decomposition.
 ///
@@ -125,7 +128,7 @@ impl<E: stwo_constraint_framework::EvalAtRow> SplitNTT<E> {
     /// - `f1`: Coefficients for the second smaller polynomial
     pub fn evaluate(
         self,
-        lookup_elements: &range_check::RCLookupElements,
+        lookup_elements: &RCLookupElements,
         eval: &mut E,
     ) -> (Vec<E::F>, Vec<E::F>) {
         // Perform split butterfly operations on each pair of coefficients

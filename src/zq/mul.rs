@@ -13,7 +13,7 @@ use num_traits::One;
 use stwo::core::fields::m31::M31;
 use stwo_constraint_framework::RelationEntry;
 
-use crate::zq::Q;
+use crate::{big_air::relation::RCLookupElements, zq::Q};
 
 pub const MUL_COL: usize = 1;
 
@@ -30,7 +30,7 @@ impl<E: stwo_constraint_framework::EvalAtRow> MulMod<E> {
         Self { a, b, q, r }
     }
 
-    pub fn evaluate(self, lookup_elements: &super::range_check::RCLookupElements, eval: &mut E) {
+    pub fn evaluate(self, lookup_elements: &RCLookupElements, eval: &mut E) {
         // Extract trace values
         eval.add_constraint(self.a * self.b - self.q * E::F::from(M31(Q)) - self.r.clone());
         // Now we need to check that the remainder is in the range [0, Q)

@@ -13,14 +13,17 @@ use stwo_constraint_framework::relation_tracker::{
     RelationSummary, RelationTrackerEntry, add_to_relation_entries,
 };
 
+use crate::zq::Q;
+
 /// Group all the *framework* components your AIR exposes. Each field can be a list so
 /// you can stuff as many sub-components as you like per module.
 pub struct BigAirComponents<'a> {
     pub f_ntt: &'a FrameworkComponent<crate::ntts::ntt::Eval>,
     pub g_ntt: &'a FrameworkComponent<crate::ntts::ntt::Eval>,
-    pub mul: &'a FrameworkComponent<crate::ntts::mul::Eval>,
+    pub mul: &'a FrameworkComponent<crate::polys::mul::Eval>,
     pub intt: &'a FrameworkComponent<crate::ntts::intt::Eval>,
-    pub range_check: &'a FrameworkComponent<crate::zq::range_check::Eval>,
+    pub sub: &'a FrameworkComponent<crate::polys::sub::Eval>,
+    pub range_check: &'a FrameworkComponent<crate::zq::range_check::Eval<Q>>,
 }
 
 /// Evaluate the committed trace back on the circle domain, collect relation entries from all
@@ -63,6 +66,7 @@ fn big_air_relation_entries(
         add_to_relation_entries(components.g_ntt, trace),
         add_to_relation_entries(components.mul, trace),
         add_to_relation_entries(components.intt, trace),
+        add_to_relation_entries(components.sub, trace),
         add_to_relation_entries(components.range_check, trace),
     )
     .collect()

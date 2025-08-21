@@ -18,7 +18,6 @@
 use crate::{ntts::roots::*, zq::inverses::INVERSES_MOD_Q};
 
 pub mod intt;
-pub mod mul;
 pub mod ntt;
 pub mod roots;
 

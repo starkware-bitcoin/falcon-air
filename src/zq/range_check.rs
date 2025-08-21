@@ -30,15 +30,15 @@ use stwo::{
 };
 use stwo_constraint_framework::{
     EvalAtRow, FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry,
-    preprocessed_columns::PreProcessedColumnId, relation,
+    preprocessed_columns::PreProcessedColumnId,
 };
 
-use crate::zq::Q;
+use crate::{big_air::relation::RCLookupElements, zq::Q};
 
 #[derive(Debug, Clone)]
-pub struct RangeCheck12289;
+pub struct RangeCheck<const Q: u32>;
 
-impl RangeCheck12289 {
+impl<const Q: u32> RangeCheck<Q> {
     /// Returns the log size needed for the range check column.
     ///
     /// The size is log₂(Q) + 1 to accommodate all values in [0, Q).
@@ -68,12 +68,6 @@ impl RangeCheck12289 {
         }
     }
 }
-
-// Lookup elements relation for range checking.
-//
-// This relation defines the lookup table used for range checking operations.
-// It connects the arithmetic components with the preprocessed range check column.
-relation!(RCLookupElements, 1);
 
 // This is a helper function for the prover to generate the trace for the range_check component
 #[derive(Debug, Clone)]
@@ -121,14 +115,14 @@ impl Claim {
 
 // Actual component that is used in the framework
 #[derive(Debug, Clone)]
-pub struct Eval {
+pub struct Eval<const Q: u32> {
     /// The claim parameters
     pub claim: Claim,
     /// Lookup elements for range checking
     pub lookup_elements: RCLookupElements,
 }
 
-impl FrameworkEval for Eval {
+impl<const Q: u32> FrameworkEval for Eval<Q> {
     fn log_size(&self) -> u32 {
         self.claim.log_size
     }
@@ -139,7 +133,7 @@ impl FrameworkEval for Eval {
 
     fn evaluate<E: EvalAtRow>(&self, mut eval: E) -> E {
         let lookup_col_1 = eval.next_trace_mask();
-        let range_check_col = eval.get_preprocessed_column(RangeCheck12289::id());
+        let range_check_col = eval.get_preprocessed_column(RangeCheck::<Q>::id());
 
         // Add the trace column to the lookup relation with coefficient -1
         // This ensures that the sum of all lookups equals zero
@@ -180,7 +174,7 @@ impl InteractionClaim {
     /// # Returns
     ///
     /// Returns the interaction trace and the interaction claim.
-    pub fn gen_interaction_trace(
+    pub fn gen_interaction_trace<const Q: u32>(
         trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
         lookup_elements: &RCLookupElements,
     ) -> (
@@ -190,7 +184,7 @@ impl InteractionClaim {
         let log_size = trace.domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
         let mut col_gen = logup_gen.new_col();
-        let range_check_col = RangeCheck12289::gen_column_simd();
+        let range_check_col = RangeCheck::<Q>::gen_column_simd();
 
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             // Get the result value from the trace (column 2)
@@ -212,4 +206,4 @@ impl InteractionClaim {
 }
 
 /// Type alias for the range check component.
-pub type Component = FrameworkComponent<Eval>;
+pub type Component<const Q: u32> = FrameworkComponent<Eval<Q>>;

@@ -15,7 +15,10 @@
 //!   f_ntt[2*i+1] = (f0_ntt[i] - root[i] * f1_ntt[i]) % q
 //!
 //! where root[i] is the appropriate root of unity for the current merge level.
-use crate::zq::{add::AddMod, mul::MulMod, range_check, sub::SubMod};
+use crate::{
+    big_air::relation::RCLookupElements,
+    zq::{add::AddMod, mul::MulMod, sub::SubMod},
+};
 
 /// Collection of merge operations for NTT polynomial combination.
 ///
@@ -106,11 +109,7 @@ impl<E: stwo_constraint_framework::EvalAtRow> MergeNTT<E> {
     /// # Returns
     ///
     /// Returns a vector of merged polynomial coefficients from the NTT computation
-    pub fn evaluate(
-        self,
-        lookup_elements: &range_check::RCLookupElements,
-        eval: &mut E,
-    ) -> Vec<E::F> {
+    pub fn evaluate(self, lookup_elements: &RCLookupElements, eval: &mut E) -> Vec<E::F> {
         // Perform merge butterfly operations on each pair of coefficients
         let mut result = vec![];
         for merge in self.0.into_iter() {
