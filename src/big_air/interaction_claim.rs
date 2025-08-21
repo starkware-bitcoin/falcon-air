@@ -1,7 +1,8 @@
 use crate::{
     big_air::relation::LookupElements,
-    ntts::{intt, mul, ntt},
-    zq::range_check,
+    ntts::{intt, ntt},
+    polys::{mul, sub},
+    zq::{Q, range_check},
 };
 use itertools::{Itertools, chain};
 use stwo::{
@@ -25,6 +26,8 @@ pub struct BigInteractionClaim {
     pub mul: mul::InteractionClaim,
     /// Interaction claim for INTT operations
     pub intt: intt::InteractionClaim,
+    /// Interaction claim for subtraction operations
+    pub sub: sub::InteractionClaim,
     /// Interaction claim for range checking
     pub range_check: range_check::InteractionClaim,
 }
@@ -36,6 +39,7 @@ impl BigInteractionClaim {
         self.g_ntt.mix_into(channel);
         self.mul.mix_into(channel);
         self.intt.mix_into(channel);
+        self.sub.mix_into(channel);
         self.range_check.mix_into(channel);
     }
 
@@ -48,6 +52,7 @@ impl BigInteractionClaim {
             + self.g_ntt.claimed_sum
             + self.mul.claimed_sum
             + self.intt.claimed_sum
+            + self.sub.claimed_sum
             + self.range_check.claimed_sum
     }
 
@@ -70,6 +75,7 @@ impl BigInteractionClaim {
         g_ntt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         mul_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         intt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
+        sub_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         range_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     ) -> (
         Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
@@ -100,9 +106,16 @@ impl BigInteractionClaim {
                 intt_trace,
                 &lookup_elements.rc,
                 &lookup_elements.mul,
+                &lookup_elements.intt,
+            );
+        let (sub_interaction_trace, sub_interaction_claim) =
+            sub::InteractionClaim::gen_interaction_trace(
+                sub_trace,
+                &lookup_elements.rc,
+                &lookup_elements.intt,
             );
         let (range_check_interaction_trace, range_check_interaction_claim) =
-            range_check::InteractionClaim::gen_interaction_trace(
+            range_check::InteractionClaim::gen_interaction_trace::<Q>(
                 range_check_trace,
                 &lookup_elements.rc,
             );
@@ -112,6 +125,7 @@ impl BigInteractionClaim {
                 g_ntt_interaction_trace,
                 mul_interaction_trace,
                 intt_interaction_trace,
+                sub_interaction_trace,
                 range_check_interaction_trace,
             )
             .collect_vec(),
@@ -120,6 +134,7 @@ impl BigInteractionClaim {
                 g_ntt: g_ntt_interaction_claim,
                 mul: mul_interaction_claim,
                 intt: intt_interaction_claim,
+                sub: sub_interaction_claim,
                 range_check: range_check_interaction_claim,
             },
         )

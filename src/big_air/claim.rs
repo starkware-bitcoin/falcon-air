@@ -1,5 +1,7 @@
 use crate::{
-    ntts::{intt, mul, ntt},
+    POLY_SIZE,
+    ntts::{intt, ntt},
+    polys::{mul, sub},
     zq::range_check,
 };
 use itertools::{Itertools, chain};
@@ -21,6 +23,8 @@ pub struct BigClaim {
     pub mul: mul::Claim,
     /// Claim for INTT operations
     pub intt: intt::Claim,
+    /// Claim for subtraction operations
+    pub sub: sub::Claim,
     /// Claim for range checking operations
     pub range_check: range_check::Claim,
 }
@@ -35,6 +39,8 @@ pub struct AllTraces {
     pub mul: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace columns from INTT operations
     pub intt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+    /// Trace columns from subtraction operations
+    pub sub: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace column from range checking: multiplicities
     pub range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
 }
@@ -46,6 +52,7 @@ impl AllTraces {
         g_ntt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         mul: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         intt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+        sub: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     ) -> Self {
         Self {
@@ -53,6 +60,7 @@ impl AllTraces {
             g_ntt,
             mul,
             intt,
+            sub,
             range_check,
         }
     }
@@ -69,6 +77,7 @@ impl BigClaim {
             self.g_ntt.log_sizes(),
             self.mul.log_sizes(),
             self.intt.log_sizes(),
+            self.sub.log_sizes(),
             self.range_check.log_sizes(),
         ];
         TreeVec::concat_cols(trees.into_iter())
@@ -83,6 +92,7 @@ impl BigClaim {
         self.g_ntt.mix_into(channel);
         self.mul.mix_into(channel);
         self.intt.mix_into(channel);
+        self.sub.mix_into(channel);
         self.range_check.mix_into(channel);
     }
 
@@ -102,22 +112,27 @@ impl BigClaim {
     /// 4. Concatenates all traces in the correct order
     pub fn gen_trace(
         &self,
+        s1: &[u32; POLY_SIZE],
+        pk: &[u32; POLY_SIZE],
+        msg_point: &[u32; POLY_SIZE],
     ) -> (
         Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         AllTraces,
     ) {
-        let (f_ntt_trace, f_ntt_remainders, f_ntt_output) = self.f_ntt.gen_trace();
-        let (g_ntt_trace, g_ntt_remainders, g_ntt_output) = self.g_ntt.gen_trace();
+        let (f_ntt_trace, f_ntt_remainders, f_ntt_output) = self.f_ntt.gen_trace(s1);
+        let (g_ntt_trace, g_ntt_remainders, g_ntt_output) = self.g_ntt.gen_trace(pk);
         let (mul_trace, mul_remainders) = self.mul.gen_trace(&f_ntt_output, &g_ntt_output);
-        let (intt_trace, intt_remainders) = self
+        let (intt_trace, intt_remainders, intt_output) = self
             .intt
             .gen_trace(mul_remainders.iter().map(|r| r.0).collect_vec());
+        let (sub_trace, sub_remainders) = self.sub.gen_trace(msg_point, &intt_output);
         let range_check_trace = self.range_check.gen_trace(
             &chain!(
                 f_ntt_remainders,
                 g_ntt_remainders,
                 intt_remainders,
-                [mul_remainders]
+                [mul_remainders],
+                [sub_remainders]
             )
             .collect_vec(),
         );
@@ -127,6 +142,7 @@ impl BigClaim {
                 g_ntt_trace.clone(),
                 mul_trace.clone(),
                 intt_trace.clone(),
+                sub_trace.clone(),
                 [range_check_trace.clone()]
             )
             .collect_vec(),
@@ -135,6 +151,7 @@ impl BigClaim {
                 g_ntt_trace,
                 mul_trace,
                 intt_trace,
+                sub_trace,
                 range_check_trace,
             ),
         )

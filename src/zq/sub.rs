@@ -14,7 +14,7 @@ use num_traits::One;
 use stwo::core::fields::m31::M31;
 use stwo_constraint_framework::RelationEntry;
 
-use crate::zq::Q;
+use crate::{big_air::relation::RCLookupElements, zq::Q};
 
 pub const SUB_COL: usize = 2;
 
@@ -31,7 +31,7 @@ impl<E: stwo_constraint_framework::EvalAtRow> SubMod<E> {
         Self { a, b, borrow, r }
     }
 
-    pub fn evaluate(self, lookup_elements: &super::range_check::RCLookupElements, eval: &mut E) {
+    pub fn evaluate(self, lookup_elements: &RCLookupElements, eval: &mut E) {
         eval.add_constraint(
             self.a + self.borrow.clone() * E::F::from(M31(Q)) - self.b - self.r.clone(),
         );
