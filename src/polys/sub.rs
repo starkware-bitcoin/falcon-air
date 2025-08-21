@@ -25,15 +25,13 @@ use stwo::{
     },
 };
 use stwo_constraint_framework::{
-    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry, relation,
+    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry,
 };
 
 use crate::{
-    big_air::relation::{INTTLookupElements, RCLookupElements},
+    big_air::relation::{INTTLookupElements, RCLookupElements, SubLookupElements},
     zq::{Q, sub::SubMod},
 };
-
-relation!(LookupElements, 1);
 
 // This is a helper function for the prover to generate the trace for the sub component
 #[derive(Debug, Clone)]
@@ -111,8 +109,8 @@ pub struct Eval {
     pub rc_lookup_elements: RCLookupElements,
     /// Lookup elements for intt operations
     pub intt_lookup_elements: INTTLookupElements,
-    // /// Lookup elements for subtraction operations
-    // pub sub_lookup_elements: LookupElements,
+    /// Lookup elements for subtraction operations
+    pub sub_lookup_elements: SubLookupElements,
 }
 
 impl FrameworkEval for Eval {
@@ -134,11 +132,11 @@ impl FrameworkEval for Eval {
         SubMod::new(a, b.clone(), borrow, remainder.clone())
             .evaluate(&self.rc_lookup_elements, &mut eval);
 
-        // eval.add_to_relation(RelationEntry::new(
-        //     &self.sub_lookup_elements,
-        //     -E::EF::one(),
-        //     &[remainder],
-        // ));
+        eval.add_to_relation(RelationEntry::new(
+            &self.sub_lookup_elements,
+            -E::EF::one(),
+            &[remainder],
+        ));
         eval.add_to_relation(RelationEntry::new(
             &self.intt_lookup_elements,
             E::EF::one(),
@@ -178,6 +176,7 @@ impl InteractionClaim {
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         rc_lookup_elements: &RCLookupElements,
         intt_lookup_elements: &INTTLookupElements,
+        sub_lookup_elements: &SubLookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
@@ -200,21 +199,21 @@ impl InteractionClaim {
             col_gen.write_frac(vec_row, numerator, denom);
         }
         col_gen.finalize_col();
-        // // Sub
-        // let mut col_gen = logup_gen.new_col();
-        // for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-        //     // Get the remainder value from the trace (column 2)
-        //     let result_packed = trace[3].data[vec_row];
+        // Sub
+        let mut col_gen = logup_gen.new_col();
+        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+            // Get the remainder value from the trace (column 2)
+            let result_packed = trace[3].data[vec_row];
 
-        //     // Create the denominator using the lookup elements
-        //     let denom: PackedQM31 = sub_lookup_elements.combine(&[result_packed]);
+            // Create the denominator using the lookup elements
+            let denom: PackedQM31 = sub_lookup_elements.combine(&[result_packed]);
 
-        //     // The numerator is 1 (we want to check that remainder is in the range)
-        //     let numerator = -PackedQM31::one();
+            // The numerator is 1 (we want to check that remainder is in the range)
+            let numerator = -PackedQM31::one();
 
-        //     col_gen.write_frac(vec_row, numerator, denom);
-        // }
-        // col_gen.finalize_col();
+            col_gen.write_frac(vec_row, numerator, denom);
+        }
+        col_gen.finalize_col();
 
         // Intt
         let mut col_gen = logup_gen.new_col();

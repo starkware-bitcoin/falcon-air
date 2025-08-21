@@ -5,6 +5,7 @@ relation!(RCLookupElements, 1);
 relation!(NTTLookupElements, 1);
 relation!(MulLookupElements, 1);
 relation!(INTTLookupElements, 1);
+relation!(SubLookupElements, 1);
 #[derive(Debug, Clone)]
 pub struct LookupElements {
     pub rc: RCLookupElements,
@@ -12,6 +13,7 @@ pub struct LookupElements {
     pub g_ntt: NTTLookupElements,
     pub mul: MulLookupElements,
     pub intt: INTTLookupElements,
+    pub sub: SubLookupElements,
 }
 
 impl LookupElements {
@@ -22,6 +24,7 @@ impl LookupElements {
             g_ntt: NTTLookupElements::draw(channel),
             mul: MulLookupElements::draw(channel),
             intt: INTTLookupElements::draw(channel),
+            sub: SubLookupElements::draw(channel),
         }
     }
 }

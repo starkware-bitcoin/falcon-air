@@ -23,6 +23,7 @@ pub struct BigAirComponents<'a> {
     pub mul: &'a FrameworkComponent<crate::polys::mul::Eval>,
     pub intt: &'a FrameworkComponent<crate::ntts::intt::Eval>,
     pub sub: &'a FrameworkComponent<crate::polys::sub::Eval>,
+    pub euclidean_norm: &'a FrameworkComponent<crate::polys::euclidean_norm::Eval>,
     pub range_check: &'a FrameworkComponent<crate::zq::range_check::Eval<Q>>,
 }
 
@@ -67,6 +68,7 @@ fn big_air_relation_entries(
         add_to_relation_entries(components.mul, trace),
         add_to_relation_entries(components.intt, trace),
         add_to_relation_entries(components.sub, trace),
+        add_to_relation_entries(components.euclidean_norm, trace),
         add_to_relation_entries(components.range_check, trace),
     )
     .collect()
