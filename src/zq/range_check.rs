@@ -33,7 +33,7 @@ use stwo_constraint_framework::{
     preprocessed_columns::PreProcessedColumnId,
 };
 
-use crate::{SIGNATURE_BOUND, big_air::relation::RCLookupElements, zq::Q};
+use crate::big_air::relation::RCLookupElements;
 
 #[derive(Debug, Clone)]
 pub struct RangeCheck<const Q: u32>;
@@ -43,7 +43,7 @@ impl<const Q: u32> RangeCheck<Q> {
     ///
     /// The size is log₂(Q) + 1 to accommodate all values in [0, Q).
     pub fn log_size() -> u32 {
-        Q.ilog2() + 1
+        Q.next_power_of_two().ilog2()
     }
 
     /// Generates the preprocessed column for range checking.
@@ -77,18 +77,6 @@ pub struct Claim {
 }
 
 impl Claim {
-    /// Returns the log sizes for the traces.
-    ///
-    /// [preprocessed_trace, trace, interaction_trace]
-    pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
-        let trace_log_sizes = vec![self.log_size];
-        TreeVec::new(vec![
-            vec![Q.ilog2() + 1],
-            trace_log_sizes,
-            vec![self.log_size; SECURE_EXTENSION_DEGREE],
-        ])
-    }
-
     /// Mixes the claim parameters into the Fiat-Shamir channel.
     pub fn mix_into(&self, channel: &mut impl Channel) {
         channel.mix_u64(self.log_size as u64);
@@ -106,6 +94,7 @@ impl Claim {
                 trace[remainder.0 as usize] += M31::one();
             }
         }
+        println!("trace: {:?}", trace.len());
         CircleEvaluation::new(
             CanonicCoset::new(self.log_size).circle_domain(),
             BaseColumn::from_iter(trace),
@@ -185,6 +174,8 @@ impl InteractionClaim {
         let mut logup_gen = LogupTraceGenerator::new(log_size);
         let mut col_gen = logup_gen.new_col();
         let range_check_col = RangeCheck::<Q>::gen_column_simd();
+        println!("range_check_col: {:?}", range_check_col.data.len());
+        println!("range check name: {:?}", RangeCheck::<Q>::id());
 
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             // Get the result value from the trace (column 2)

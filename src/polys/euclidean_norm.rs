@@ -32,7 +32,7 @@ use stwo_constraint_framework::{
 };
 
 use crate::{
-    POLY_SIZE,
+    POLY_SIZE, SIGNATURE_BOUND,
     big_air::relation::{RCLookupElements, SubLookupElements},
     zq::Q,
 };
@@ -68,7 +68,7 @@ impl Claim {
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<M31>,
-        Vec<M31>,
+        (u32, u32),
     ) {
         let mut borrows_s0 = s0
             .iter()
@@ -130,6 +130,26 @@ impl Claim {
             .iter()
             .map(|a| M31::from_u32_unchecked(*a))
             .collect::<Vec<_>>();
+
+        let base_exp = 14;
+        let base = 1 << base_exp;
+        let r = (SIGNATURE_BOUND % base) as i32;
+        let q = (SIGNATURE_BOUND / base) as i32;
+        let last_cum_sum = cum_sum[POLY_SIZE - 1].0;
+        let x0 = last_cum_sum % base;
+        let b0 = ((r - x0 as i32) < 0) as i32;
+        let x1 = ((last_cum_sum >> base_exp) % base) as i32;
+        let b1 = ((q - x1 - b0) > 0) as u32;
+        debug_assert_eq!(b1, 0);
+        let mut x0_col = vec![M31(0); POLY_SIZE];
+        x0_col[POLY_SIZE - 1] = M31(x0);
+        let mut x1_col = vec![M31(0); POLY_SIZE];
+        x1_col[POLY_SIZE - 1] = M31(x1 as u32);
+        let mut b0_col = vec![M31(0); POLY_SIZE];
+        b0_col[POLY_SIZE - 1] = M31(b0 as u32);
+        let mut b1_col = vec![M31(0); POLY_SIZE];
+        b1_col[POLY_SIZE - 1] = M31(b1);
+
         bit_reverse_coset_to_circle_domain_order(&mut cum_sum);
         (
             [
@@ -141,7 +161,11 @@ impl Claim {
                 bitrev_remainders_s1,
                 cum_sum.clone(),
                 is_not_first,
-                // is_last,
+                is_last,
+                x0_col,
+                x1_col,
+                b0_col,
+                b1_col,
             ]
             .into_iter()
             .map(|col| {
@@ -152,7 +176,7 @@ impl Claim {
             })
             .collect::<Vec<_>>(),
             remainders,
-            cum_sum,
+            (x0, x1 as u32),
         )
     }
 }
@@ -189,13 +213,12 @@ impl FrameworkEval for Eval {
         let [cum_sum_prev, cum_sum_current] =
             eval.next_interaction_mask(ORIGINAL_TRACE_IDX, [-1, 0]);
         let is_not_first = eval.next_trace_mask();
+        let is_last = eval.next_trace_mask();
+        let x0 = eval.next_trace_mask();
+        let x1 = eval.next_trace_mask();
+        let b0 = eval.next_trace_mask();
+        let b1 = eval.next_trace_mask();
 
-        // if it's the last row check if the signature is in the range
-        eval.add_to_relation(RelationEntry::new(
-            &self.signature_bound_lookup_elements,
-            E::EF::one(),
-            &[cum_sum_current.clone()],
-        ));
         eval.add_to_relation(RelationEntry::new(
             &self.half_rc_lookup_elements,
             E::EF::one(),
@@ -241,6 +264,18 @@ impl FrameworkEval for Eval {
             &[s0.clone()],
         ));
 
+        // if it's the last row check if the signature is in the range
+        eval.add_to_relation(RelationEntry::new(
+            &self.signature_bound_lookup_elements,
+            E::EF::from(is_last.clone()),
+            &[x0],
+        ));
+        eval.add_to_relation(RelationEntry::new(
+            &self.signature_bound_lookup_elements,
+            E::EF::from(is_last.clone()),
+            &[x1],
+        ));
+
         eval.finalize_logup();
         eval
     }
@@ -281,6 +316,8 @@ impl InteractionClaim {
         InteractionClaim,
     ) {
         let log_size = trace[0].domain.log_size();
+        let is_last = trace[8].clone();
+
         let mut logup_gen = LogupTraceGenerator::new(log_size);
         // Range check s0
         let mut col_gen = logup_gen.new_col();
@@ -323,13 +360,20 @@ impl InteractionClaim {
         col_gen.finalize_col();
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            let result_packed = trace[6].data[vec_row];
+            let result_packed = trace[9].data[vec_row];
             let denom: PackedQM31 = signature_bound_lookup_elements.combine(&[result_packed]);
-            let numerator = PackedQM31::one();
+            let numerator = PackedQM31::from(is_last.data[vec_row]);
             col_gen.write_frac(vec_row, numerator, denom);
         }
         col_gen.finalize_col();
-
+        let mut col_gen = logup_gen.new_col();
+        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+            let result_packed = trace[10].data[vec_row];
+            let denom: PackedQM31 = signature_bound_lookup_elements.combine(&[result_packed]);
+            let numerator = PackedQM31::from(is_last.data[vec_row]);
+            col_gen.write_frac(vec_row, numerator, denom);
+        }
+        col_gen.finalize_col();
         let (interaction_trace, claimed_sum) = logup_gen.finalize_last();
         (interaction_trace, InteractionClaim { claimed_sum })
     }

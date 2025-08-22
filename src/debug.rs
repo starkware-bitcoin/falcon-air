@@ -40,9 +40,14 @@ pub fn assert_constraints(
     // Preprocessed trace.
     let range_check_preprocessed = range_check::RangeCheck::<Q>::gen_column_simd();
     let half_range_check_preprocessed = range_check::RangeCheck::<{ Q / 2 }>::gen_column_simd();
+    let sig_bound_check_preprocessed = range_check::RangeCheck::<{ 1 << 14 }>::gen_column_simd();
 
     let mut tree_builder = commitment_scheme.tree_builder();
-    tree_builder.extend_evals([range_check_preprocessed, half_range_check_preprocessed]);
+    tree_builder.extend_evals([
+        range_check_preprocessed,
+        half_range_check_preprocessed,
+        sig_bound_check_preprocessed,
+    ]);
     tree_builder.finalize_interaction();
 
     // Base trace.
@@ -103,6 +108,7 @@ pub fn assert_constraints(
     let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
         RangeCheck::<Q>::id(),
         RangeCheck::<{ Q / 2 }>::id(),
+        RangeCheck::<{ 1 << 14 }>::id(),
     ]);
 
     let components = (
@@ -175,7 +181,7 @@ pub fn assert_constraints(
         ),
         &range_check::Component::new(
             &mut tree_span_provider,
-            range_check::Eval::<SIGNATURE_BOUND> {
+            range_check::Eval::<{ 1 << 14 }> {
                 claim: claim.sig_bound_check,
                 lookup_elements: lookup_elements.sig_bound_check.clone(),
             },
@@ -287,7 +293,7 @@ fn assert_components(
         &FrameworkComponent<sub::Eval>,
         &FrameworkComponent<euclidean_norm::Eval>,
         &FrameworkComponent<range_check::Eval<{ Q / 2 }>>,
-        &FrameworkComponent<range_check::Eval<SIGNATURE_BOUND>>,
+        &FrameworkComponent<range_check::Eval<{ 1 << 14 }>>,
         &FrameworkComponent<range_check::Eval<Q>>,
     ),
 ) {

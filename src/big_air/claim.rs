@@ -85,25 +85,6 @@ impl AllTraces {
 }
 
 impl BigClaim {
-    /// Returns the combined log sizes for all trace columns.
-    ///
-    /// Concatenates the log sizes from all four components to determine
-    /// the total trace structure.
-    pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
-        let trees = vec![
-            self.f_ntt.log_sizes(),
-            self.g_ntt.log_sizes(),
-            self.mul.log_sizes(),
-            self.intt.log_sizes(),
-            self.sub.log_sizes(),
-            self.euclidean_norm.log_sizes(),
-            self.half_range_check.log_sizes(),
-            self.sig_bound_check.log_sizes(),
-            self.range_check.log_sizes(),
-        ];
-        TreeVec::concat_cols(trees.into_iter())
-    }
-
     /// Mixes all claim parameters into the Fiat-Shamir channel.
     ///
     /// This ensures that the proof is deterministic and all components
@@ -150,20 +131,31 @@ impl BigClaim {
             .intt
             .gen_trace(mul_remainders.iter().map(|r| r.0).collect_vec());
         let (sub_trace, sub_remainders) = self.sub.gen_trace(msg_point, &intt_output);
-        let (euclidean_norm_trace, euclidean_norm_remainders, euclidean_norm_output) =
-            self.euclidean_norm.gen_trace(
-                &sub_remainders
-                    .iter()
-                    .map(|r| r.0)
-                    .collect_vec()
-                    .try_into()
-                    .unwrap(),
-                s1,
-            );
+        let (
+            euclidean_norm_trace,
+            euclidean_norm_remainders,
+            (euclidean_norm_output_low, euclidean_norm_output_high),
+        ) = self.euclidean_norm.gen_trace(
+            &sub_remainders
+                .iter()
+                .map(|r| r.0)
+                .collect_vec()
+                .try_into()
+                .unwrap(),
+            s1,
+        );
         let half_range_check_trace = self
             .half_range_check
             .gen_trace(&chain!([euclidean_norm_remainders]).collect_vec());
-        let sig_bound_check_trace = self.sig_bound_check.gen_trace(&[euclidean_norm_output]);
+        println!("sig boung");
+        let sig_bound_check_trace = self.sig_bound_check.gen_trace(&[vec![
+            M31(euclidean_norm_output_low),
+            M31(euclidean_norm_output_high),
+        ]]);
+        println!(
+            "sig_bound_check_trace: {:?}",
+            sig_bound_check_trace.data.len()
+        );
         let range_check_trace = self.range_check.gen_trace(
             &chain!(
                 f_ntt_remainders,

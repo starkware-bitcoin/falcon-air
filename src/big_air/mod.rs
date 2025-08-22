@@ -71,20 +71,15 @@ pub fn prove_falcon(
 ) -> Result<StarkProof<Blake2sMerkleHasher>, ProvingError> {
     // Use consistent trace size across all components
     let range_check_log_size = Q.ilog2() + 1;
-    let sig_bound_check_log_size = SIGNATURE_BOUND.next_power_of_two().ilog2();
 
     // Initialize Fiat-Shamir channel and commitment scheme
     let channel = &mut Blake2sChannel::default();
     let pcs_config = PcsConfig::default();
     pcs_config.mix_into(channel);
     let twiddles = SimdBackend::precompute_twiddles(
-        CanonicCoset::new(
-            max(range_check_log_size, sig_bound_check_log_size)
-                + pcs_config.fri_config.log_blowup_factor
-                + 1,
-        )
-        .circle_domain()
-        .half_coset,
+        CanonicCoset::new(range_check_log_size + pcs_config.fri_config.log_blowup_factor + 1)
+            .circle_domain()
+            .half_coset,
     );
 
     // Commit to preprocessed columns (range check table)
@@ -93,8 +88,7 @@ pub fn prove_falcon(
     let mut tree_builder = commitment_scheme.tree_builder();
     let range_check_preprocessed = range_check::RangeCheck::<Q>::gen_column_simd();
     let half_range_check_preprocessed = range_check::RangeCheck::<{ Q / 2 }>::gen_column_simd();
-    let sig_bound_check_preprocessed =
-        range_check::RangeCheck::<SIGNATURE_BOUND>::gen_column_simd();
+    let sig_bound_check_preprocessed = range_check::RangeCheck::<{ 1 << 14 }>::gen_column_simd();
     tree_builder.extend_evals([
         range_check_preprocessed,
         half_range_check_preprocessed,
@@ -120,7 +114,7 @@ pub fn prove_falcon(
             log_size: range_check_log_size - 1,
         },
         sig_bound_check: range_check::Claim {
-            log_size: sig_bound_check_log_size,
+            log_size: range_check_log_size,
         },
         range_check: range_check::Claim {
             log_size: range_check_log_size,
@@ -163,7 +157,7 @@ pub fn prove_falcon(
     let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
         range_check::RangeCheck::<Q>::id(),
         range_check::RangeCheck::<{ Q / 2 }>::id(),
-        range_check::RangeCheck::<SIGNATURE_BOUND>::id(),
+        range_check::RangeCheck::<{ 1 << 14 }>::id(),
     ]);
 
     let f_ntt_component = ntt::Component::new(
@@ -235,7 +229,7 @@ pub fn prove_falcon(
     );
     let sig_bound_check_component = range_check::Component::new(
         &mut tree_span_provider,
-        range_check::Eval::<SIGNATURE_BOUND> {
+        range_check::Eval::<{ 1 << 14 }> {
             claim: claim.sig_bound_check,
             lookup_elements: lookup_elements.sig_bound_check.clone(),
         },

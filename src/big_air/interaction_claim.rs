@@ -144,7 +144,7 @@ impl BigInteractionClaim {
                 &lookup_elements.half_range_check,
             );
         let (sig_bound_check_interaction_trace, sig_bound_check_interaction_claim) =
-            range_check::InteractionClaim::gen_interaction_trace::<SIGNATURE_BOUND>(
+            range_check::InteractionClaim::gen_interaction_trace::<{ 1 << 14 }>(
                 sig_bound_check_trace,
                 &lookup_elements.sig_bound_check,
             );
