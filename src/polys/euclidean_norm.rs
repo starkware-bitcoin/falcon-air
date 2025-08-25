@@ -68,6 +68,7 @@ impl Claim {
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<M31>,
+        (u32, u32),
     ) {
         let mut borrows_s0 = s0
             .iter()
@@ -100,6 +101,8 @@ impl Claim {
         let mut is_not_first = vec![M31(1); POLY_SIZE];
         is_not_first[0] = M31(0);
         let domain = CanonicCoset::new(self.log_size).circle_domain();
+        let mut is_last = vec![M31(0); POLY_SIZE];
+        is_last[POLY_SIZE - 1] = M31(1);
         let mut s0 = s0
             .iter()
             .map(|a| M31::from_u32_unchecked(*a))
@@ -127,9 +130,15 @@ impl Claim {
             .iter()
             .map(|a| M31::from_u32_unchecked(*a))
             .collect::<Vec<_>>();
-        println!("cum_sum: {:?}", cum_sum.last().unwrap());
+
+        let last_cum_sum = cum_sum.last().unwrap().0;
+
+        let mut cum_sum_low = vec![M31(0); POLY_SIZE];
+        cum_sum_low[POLY_SIZE - 1] = M31(last_cum_sum & ((1 << 14) - 1));
+        let mut cum_sum_high = vec![M31(0); POLY_SIZE];
+        cum_sum_high[POLY_SIZE - 1] = M31(last_cum_sum >> 14);
+
         bit_reverse_coset_to_circle_domain_order(&mut cum_sum);
-        bit_reverse_coset_to_circle_domain_order(&mut is_not_first);
         (
             [
                 s0,
@@ -138,8 +147,11 @@ impl Claim {
                 s1,
                 borrows_s1,
                 bitrev_remainders_s1,
-                cum_sum,
+                cum_sum.clone(),
                 is_not_first,
+                is_last,
+                cum_sum_low,
+                cum_sum_high,
             ]
             .into_iter()
             .map(|col| {
@@ -150,6 +162,7 @@ impl Claim {
             })
             .collect::<Vec<_>>(),
             remainders,
+            (last_cum_sum & ((1 << 14) - 1), last_cum_sum >> 14),
         )
     }
 }
@@ -163,6 +176,8 @@ pub struct Eval {
     pub half_rc_lookup_elements: RCLookupElements,
     /// Lookup elements for input
     pub s0_lookup_elements: SubLookupElements,
+    pub low_sig_bound_check_lookup_elements: RCLookupElements,
+    pub high_sig_bound_check_lookup_elements: RCLookupElements,
 }
 
 impl FrameworkEval for Eval {
@@ -182,10 +197,13 @@ impl FrameworkEval for Eval {
         let s1 = eval.next_trace_mask();
         let borrow_s1 = eval.next_trace_mask();
         let remainder_s1 = eval.next_trace_mask();
-
         let [cum_sum_prev, cum_sum_current] =
             eval.next_interaction_mask(ORIGINAL_TRACE_IDX, [-1, 0]);
         let is_not_first = eval.next_trace_mask();
+        let is_last = eval.next_trace_mask();
+        let low_cum_sum = eval.next_trace_mask();
+        let high_cum_sum = eval.next_trace_mask();
+
         eval.add_to_relation(RelationEntry::new(
             &self.half_rc_lookup_elements,
             E::EF::one(),
@@ -231,6 +249,18 @@ impl FrameworkEval for Eval {
             &[s0.clone()],
         ));
 
+        // if it's the last row check if the signature is in the range
+        eval.add_to_relation(RelationEntry::new(
+            &self.low_sig_bound_check_lookup_elements,
+            E::EF::from(is_last.clone()),
+            &[low_cum_sum],
+        ));
+        eval.add_to_relation(RelationEntry::new(
+            &self.high_sig_bound_check_lookup_elements,
+            E::EF::from(is_last.clone()),
+            &[high_cum_sum],
+        ));
+
         eval.finalize_logup();
         eval
     }
@@ -265,11 +295,15 @@ impl InteractionClaim {
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         half_rc_lookup_elements: &RCLookupElements,
         s0_lookup_elements: &SubLookupElements,
+        low_sig_bound_check_lookup_elements: &RCLookupElements,
+        high_sig_bound_check_lookup_elements: &RCLookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
     ) {
         let log_size = trace[0].domain.log_size();
+        let is_last = trace[8].clone();
+
         let mut logup_gen = LogupTraceGenerator::new(log_size);
         // Range check s0
         let mut col_gen = logup_gen.new_col();
@@ -310,7 +344,22 @@ impl InteractionClaim {
             col_gen.write_frac(vec_row, numerator, denom);
         }
         col_gen.finalize_col();
-
+        let mut col_gen = logup_gen.new_col();
+        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+            let result_packed = trace[9].data[vec_row];
+            let denom: PackedQM31 = low_sig_bound_check_lookup_elements.combine(&[result_packed]);
+            let numerator = PackedQM31::from(is_last.data[vec_row]);
+            col_gen.write_frac(vec_row, numerator, denom);
+        }
+        col_gen.finalize_col();
+        let mut col_gen = logup_gen.new_col();
+        for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+            let result_packed = trace[10].data[vec_row];
+            let denom: PackedQM31 = high_sig_bound_check_lookup_elements.combine(&[result_packed]);
+            let numerator = PackedQM31::from(is_last.data[vec_row]);
+            col_gen.write_frac(vec_row, numerator, denom);
+        }
+        col_gen.finalize_col();
         let (interaction_trace, claimed_sum) = logup_gen.finalize_last();
         (interaction_trace, InteractionClaim { claimed_sum })
     }

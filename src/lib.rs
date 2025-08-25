@@ -25,8 +25,10 @@ pub const SIGNATURE_BOUNDS: [u32; 10] = [
     101498, 208714, 428865, 892039, 1852696, 3842630, 7959734, 16468416, 34034726, 70265242,
 ];
 pub const SIGNATURE_BOUND: u32 = SIGNATURE_BOUNDS[POLY_LOG_SIZE as usize - 1];
-#[cfg(test)]
-mod input {
+pub const LOW_SIG_BOUND: u32 = SIGNATURE_BOUND & ((1 << 14) - 1);
+pub const HIGH_SIG_BOUND: u32 = SIGNATURE_BOUND >> 14;
+
+pub mod input {
     use crate::POLY_SIZE;
 
     pub const TEST_S1: &[u32; POLY_SIZE] = &[

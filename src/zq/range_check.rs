@@ -18,9 +18,8 @@ use stwo::{
         channel::Channel,
         fields::{
             m31::{BaseField, M31},
-            qm31::{QM31, SECURE_EXTENSION_DEGREE},
+            qm31::QM31,
         },
-        pcs::TreeVec,
         poly::circle::CanonicCoset,
     },
     prover::{
@@ -33,7 +32,7 @@ use stwo_constraint_framework::{
     preprocessed_columns::PreProcessedColumnId,
 };
 
-use crate::{big_air::relation::RCLookupElements, zq::Q};
+use crate::big_air::relation::RCLookupElements;
 
 #[derive(Debug, Clone)]
 pub struct RangeCheck<const Q: u32>;
@@ -43,7 +42,7 @@ impl<const Q: u32> RangeCheck<Q> {
     ///
     /// The size is log₂(Q) + 1 to accommodate all values in [0, Q).
     pub fn log_size() -> u32 {
-        Q.ilog2() + 1
+        Q.next_power_of_two().ilog2()
     }
 
     /// Generates the preprocessed column for range checking.
@@ -77,18 +76,6 @@ pub struct Claim {
 }
 
 impl Claim {
-    /// Returns the log sizes for the traces.
-    ///
-    /// [preprocessed_trace, trace, interaction_trace]
-    pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
-        let trace_log_sizes = vec![self.log_size];
-        TreeVec::new(vec![
-            vec![Q.ilog2() + 1],
-            trace_log_sizes,
-            vec![self.log_size; SECURE_EXTENSION_DEGREE],
-        ])
-    }
-
     /// Mixes the claim parameters into the Fiat-Shamir channel.
     pub fn mix_into(&self, channel: &mut impl Channel) {
         channel.mix_u64(self.log_size as u64);
@@ -190,7 +177,6 @@ impl InteractionClaim {
             // Get the result value from the trace (column 2)
             let multiplicity = trace.data[vec_row];
 
-            // Create the denominator using the lookup elements
             let denom: PackedQM31 = lookup_elements.combine(&[range_check_col.data[vec_row]]);
 
             // The numerator is 1 (we want to check that result is in the range)
