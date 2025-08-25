@@ -1,14 +1,45 @@
-//! # Modular Multiplication Component
+//! # Euclidean Norm Component
 //!
-//! This module implements STARK proof components for modular multiplication operations.
+//! This module implements STARK proof components for Euclidean norm computation
+//! for polynomial coefficients. The Euclidean norm is used for signature verification
+//! in the Falcon signature scheme.
 //!
-//! The modular multiplication operation computes (a * b) mod q, where q = 12289.
-//! The operation is decomposed into:
-//! - a * b = quotient * q + remainder
-//! - where remainder ∈ [0, q)
+//! # Mathematical Foundation
 //!
-//! The component generates traces for the operands (a, b), quotient, and remainder,
-//! and enforces the constraint that the remainder is within the valid range.
+//! The Euclidean norm computes ||s||² = Σᵢ(sᵢ²) for a polynomial s with coefficients
+//! in the range [-q/2, q/2]. This is a regular Euclidean norm computation (not modular)
+//! that produces a real number result.
+//!
+//! # Algorithm Details
+//!
+//! The Euclidean norm computation involves several steps:
+//!
+//! 1. **Coefficient Normalization**: Convert coefficients from [0, q) to [-q/2, q/2]
+//!    - If sᵢ > q/2: borrow = 1, remainder = q - sᵢ
+//!    - If sᵢ ≤ q/2: borrow = 0, remainder = sᵢ
+//!
+//! 2. **Squared Sum Computation**: Compute Σᵢ(remainderᵢ²) for both polynomials
+//!    - Accumulate squared remainders in a cumulative sum
+//!    - The result is a regular integer sum (not modular)
+//!
+//! 3. **Range Checking**: Verify that the final Euclidean norm is within predefined bounds
+//!    - Check that the norm is below the signature bound threshold
+//!    - Ensure the signature meets the security requirements
+//!
+//! # Trace Structure
+//!
+//! The component generates traces with the following columns:
+//! - Borrow indicators for coefficient normalization
+//! - Normalized remainders for both polynomials
+//! - Cumulative sums of squared remainders
+//! - Final Euclidean norm values
+//!
+//! # Usage
+//!
+//! This component is used in the Falcon signature scheme for signature verification.
+//! The Euclidean norm of the signature polynomial must be below a predefined threshold
+//! for the signature to be considered valid. This threshold is determined by the
+//! security parameters of the signature scheme.
 
 use itertools::chain;
 use num_traits::One;
@@ -37,7 +68,23 @@ use crate::{
     zq::Q,
 };
 
-// This is a helper function for the prover to generate the trace for the mul component
+/// Claim parameters for the Euclidean norm circuit.
+///
+/// This struct defines the parameters needed to generate and verify Euclidean norm proofs.
+/// The claim contains the logarithmic size of the trace, which determines the number of
+/// polynomial coefficients that can be processed.
+///
+/// # Parameters
+///
+/// - `log_size`: The log base 2 of the trace size (e.g., 10 for 1024 coefficients)
+///   This determines the number of polynomial coefficients and the size of the computation trace.
+///
+/// # Example
+///
+/// For a polynomial with 1024 coefficients:
+/// ```rust
+/// let claim = Claim { log_size: 10 };
+/// ```
 #[derive(Debug, Clone)]
 pub struct Claim {
     /// The log base 2 of the trace size
@@ -58,9 +105,31 @@ impl Claim {
         channel.mix_u64(self.log_size as u64);
     }
 
-    /// Generates the trace for the mul component
-    /// Generates 2 random numbers and creates a trace for the mul component
-    /// returns the columns in this order: a, b, quotient, remainder
+    /// Generates the trace for the Euclidean norm component.
+    ///
+    /// This function creates a trace that represents Euclidean norm computation
+    /// for two polynomial signatures. The computation involves coefficient normalization,
+    /// squared sum accumulation, and range checking against predefined bounds.
+    ///
+    /// # Algorithm Details
+    ///
+    /// For each polynomial signature (s0, s1), the function:
+    /// 1. Normalizes coefficients from [0, q) to [-q/2, q/2]
+    /// 2. Computes squared remainders for both polynomials
+    /// 3. Accumulates the squared sums
+    /// 4. Checks that the final norm is within predefined bounds
+    ///
+    /// # Parameters
+    ///
+    /// - `s0`: First polynomial signature with coefficients in [0, q)
+    /// - `s1`: Second polynomial signature with coefficients in [0, q)
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple containing:
+    /// - `ColumnVec<CircleEvaluation<...>>`: The computation trace columns
+    /// - `Vec<M31>`: Remainder values for range checking
+    /// - `(u32, u32)`: Final Euclidean norm values for both polynomials
     pub fn gen_trace(
         &self,
         s0: &[u32; POLY_SIZE],

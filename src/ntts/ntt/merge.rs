@@ -15,6 +15,18 @@
 //!   f_ntt[2*i+1] = (f0_ntt[i] - root[i] * f1_ntt[i]) % q
 //!
 //! where root[i] is the appropriate root of unity for the current merge level.
+//!
+//! # Mathematical Foundation
+//!
+//! The merge operation implements the Cooley-Tukey butterfly pattern used in FFT/NTT algorithms.
+//! Given two polynomials f0_ntt and f1_ntt of size n/2, and a root of unity ω, the merge
+//! produces a polynomial of size n by computing:
+//!
+//! f_ntt[2*i] = f0_ntt[i] + ω^i * f1_ntt[i]
+//! f_ntt[2*i+1] = f0_ntt[i] - ω^i * f1_ntt[i]
+//!
+//! This operation preserves the NTT property and allows recursive construction
+//! of larger polynomial evaluations from smaller ones.
 use crate::{
     big_air::relation::RCLookupElements,
     zq::{add::AddMod, mul::MulMod, sub::SubMod},
@@ -24,7 +36,8 @@ use crate::{
 ///
 /// This struct holds a vector of merge operations that will be evaluated
 /// together to combine NTT results from smaller subproblems into larger
-/// polynomial evaluations.
+/// polynomial evaluations. Each merge operation implements the butterfly pattern
+/// using appropriate roots of unity for the current NTT level.
 #[derive(Clone, Debug)]
 pub struct MergeNTT<E: stwo_constraint_framework::EvalAtRow>(pub Vec<Merge<E>>);
 
@@ -39,7 +52,8 @@ pub struct MergeNTT<E: stwo_constraint_framework::EvalAtRow>(pub Vec<Merge<E>>);
 /// 2. Addition of f0_ntt and the multiplied result
 /// 3. Subtraction of the multiplied result from f0_ntt
 ///
-/// Each operation includes modular arithmetic components for range checking.
+/// Each operation includes modular arithmetic components for range checking
+/// to ensure all intermediate values remain within field bounds [0, Q).
 #[derive(Clone, Debug)]
 pub struct Merge<E: stwo_constraint_framework::EvalAtRow> {
     /// Multiplication operation: f1_ntt[i] * root[i] with modular arithmetic components
@@ -108,7 +122,8 @@ impl<E: stwo_constraint_framework::EvalAtRow> MergeNTT<E> {
     ///
     /// # Returns
     ///
-    /// Returns a vector of merged polynomial coefficients from the NTT computation
+    /// Returns a vector of merged polynomial coefficients from the NTT computation.
+    /// The coefficients are in evaluation form and ready for the next NTT level.
     pub fn evaluate(self, lookup_elements: &RCLookupElements, eval: &mut E) -> Vec<E::F> {
         // Perform merge butterfly operations on each pair of coefficients
         let mut result = vec![];

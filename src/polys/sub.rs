@@ -1,14 +1,49 @@
 //! # Modular Subtraction Component
 //!
-//! This module implements STARK proof components for modular subtraction operations.
+//! This module implements STARK proof components for modular subtraction operations
+//! over the finite field Z_q where q = 12289.
 //!
-//! The modular subtraction operation computes (a - b) mod q, where q = 12289.
+//! # Mathematical Foundation
+//!
+//! The modular subtraction operation computes (a - b) mod q, where a, b ∈ [0, q).
 //! The operation is decomposed into:
-//! - a - b = remainder (mod q)
-//! - where remainder ∈ [0, q)
 //!
-//! The component generates traces for the operands (a, b) and remainder,
-//! and enforces the constraint that the remainder is within the valid range.
+//! a - b = borrow * q + remainder
+//!
+//! where:
+//! - remainder ∈ [0, q) (the result of modular subtraction)
+//! - borrow ∈ {0, 1} (indicates if a < b, requiring field addition)
+//!
+//! # Algorithm Details
+//!
+//! The subtraction is implemented using the following logic:
+//! - If a ≥ b: borrow = 0, remainder = a - b
+//! - If a < b: borrow = 1, remainder = a + q - b
+//!
+//! This ensures that the result is always in the range [0, q) and properly
+//! handles the modular arithmetic requirements.
+//!
+//! # Trace Structure
+//!
+//! The component generates traces with the following columns:
+//! - Column 0: First operand a
+//! - Column 1: Second operand b  
+//! - Column 2: Borrow bit (0 or 1)
+//! - Column 3: Remainder (result of modular subtraction)
+//!
+//! # Range Checking
+//!
+//! The component enforces constraints that ensure:
+//! - All operands are within [0, q)
+//! - The remainder is within [0, q)
+//! - The borrow bit is either 0 or 1
+//! - The modular arithmetic relationship holds: a - b = borrow * q + remainder
+//!
+//! # Usage
+//!
+//! This component is used in polynomial arithmetic operations where modular
+//! subtraction is required, such as in the Falcon signature scheme for
+//! coefficient-wise polynomial operations.
 
 use num_traits::One;
 use stwo::{
@@ -33,10 +68,31 @@ use crate::{
     zq::{Q, sub::SubMod},
 };
 
-// This is a helper function for the prover to generate the trace for the sub component
+/// Claim parameters for the modular subtraction circuit.
+///
+/// This struct defines the parameters needed to generate and verify modular subtraction proofs.
+/// The claim contains the logarithmic size of the trace, which determines the number of
+/// subtraction operations that can be proven.
+///
+/// # Parameters
+///
+/// - `log_size`: The log base 2 of the trace size (e.g., 10 for 1024 operations)
+///   This determines the number of subtraction operations and the size of the computation trace.
+///
+/// # Example
+///
+/// For a trace with 1024 subtraction operations:
+/// ```rust
+/// let claim = Claim { log_size: 10 };
+/// ```
 #[derive(Debug, Clone)]
 pub struct Claim {
     /// The log base 2 of the trace size
+    ///
+    /// This value determines:
+    /// - Number of subtraction operations: 2^log_size
+    /// - Trace size: 2^log_size rows
+    /// - Memory requirements for proof generation
     pub log_size: u32,
 }
 
@@ -49,14 +105,62 @@ impl Claim {
         TreeVec::new(vec![vec![], trace_log_sizes, vec![]])
     }
 
-    /// Mixes the claim parameters into the Fiat-Shamir channel.
+    /// Mixes the claim parameters into the Fiat-Shamir channel for non-interactive proof generation.
+    ///
+    /// This method incorporates the subtraction claim parameters into the Fiat-Shamir challenge
+    /// generation process, ensuring that the proof is bound to the specific parameters
+    /// used in the subtraction computation.
+    ///
+    /// # Parameters Mixed
+    ///
+    /// - `log_size`: The logarithmic size of the trace (determines number of operations)
+    ///   This parameter affects the complexity and structure of the subtraction computation.
+    ///
+    /// # Security Properties
+    ///
+    /// By mixing the claim parameters into the channel:
+    /// - The proof is bound to the specific trace size used
+    /// - Prevents parameter substitution attacks
+    /// - Ensures proof soundness for the claimed parameters
     pub fn mix_into(&self, channel: &mut impl Channel) {
         channel.mix_u64(self.log_size as u64);
     }
 
-    /// Generates the trace for the sub component
-    /// Generates 2 random numbers and creates a trace for the sub component
-    /// returns the columns in this order: a, b, borrow, remainder
+    /// Generates the trace for the modular subtraction component.
+    ///
+    /// This function creates a trace that represents modular subtraction operations
+    /// for pairs of operands. Each subtraction operation is decomposed into borrow
+    /// and remainder parts for modular arithmetic verification.
+    ///
+    /// # Algorithm Details
+    ///
+    /// For each pair of operands (a, b), the function computes:
+    /// - borrow = (a < b) ? 1 : 0
+    /// - remainder = a + borrow * Q - b
+    ///
+    /// This ensures that the result is always in the range [0, Q) and properly
+    /// handles the modular arithmetic requirements.
+    ///
+    /// # Parameters
+    ///
+    /// - `a`: First operand array with values in [0, Q)
+    /// - `b`: Second operand array with values in [0, Q)
+    ///   Both arrays must have the same length.
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple containing:
+    /// - `ColumnVec<CircleEvaluation<...>>`: The computation trace columns
+    ///   Columns are in order: a, b, borrow, remainder
+    /// - `Vec<M31>`: Remainder values for range checking
+    ///
+    /// # Trace Structure
+    ///
+    /// The generated trace contains 4 columns per operation:
+    /// - Column 0: First operand a
+    /// - Column 1: Second operand b
+    /// - Column 2: Borrow bit (0 or 1)
+    /// - Column 3: Remainder (result of modular subtraction)
     pub fn gen_trace(
         &self,
         a: &[u32],

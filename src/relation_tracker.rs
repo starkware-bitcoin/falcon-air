@@ -19,6 +19,7 @@ use crate::{HIGH_SIG_BOUND, LOW_SIG_BOUND, zq::Q};
 /// you can stuff as many sub-components as you like per module.
 pub struct BigAirComponents<'a> {
     pub f_ntt: &'a FrameworkComponent<crate::ntts::ntt::Eval>,
+    pub f_ntt_butterfly: &'a FrameworkComponent<crate::ntts::ntt::butterfly::Eval>,
     pub g_ntt: &'a FrameworkComponent<crate::ntts::ntt::Eval>,
     pub mul: &'a FrameworkComponent<crate::polys::mul::Eval>,
     pub intt: &'a FrameworkComponent<crate::ntts::intt::Eval>,
@@ -67,6 +68,7 @@ fn big_air_relation_entries(
 ) -> Vec<RelationTrackerEntry> {
     chain!(
         add_to_relation_entries(components.f_ntt, trace),
+        add_to_relation_entries(components.f_ntt_butterfly, trace),
         add_to_relation_entries(components.g_ntt, trace),
         add_to_relation_entries(components.mul, trace),
         add_to_relation_entries(components.intt, trace),

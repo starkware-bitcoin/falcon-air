@@ -50,6 +50,7 @@ use crate::{
     zq::{Q, add::AddMod, mul::MulMod, sub::SubMod},
 };
 
+pub mod butterfly;
 pub mod merge;
 
 #[derive(Debug, Clone)]
@@ -99,6 +100,7 @@ impl Claim {
     pub fn gen_trace(
         &self,
         poly: &[u32; POLY_SIZE],
+        is_first_iteration: bool,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<Vec<M31>>,
@@ -182,6 +184,7 @@ impl Claim {
         for [_, _, _, _, _, left, _, right] in trace.iter() {
             polys[0].push(vec![*left, *right]);
         }
+
         let mut trace = vec![];
 
         // Phase 2: Recursive Merging Operations
@@ -256,7 +259,7 @@ impl Claim {
         // Convert the trace values to circle evaluations for the proof system
         let domain = CanonicCoset::new(self.log_size).circle_domain();
         let mut is_first = vec![M31(0); 1 << self.log_size];
-        is_first[bit_reversed_0] = M31(1);
+        is_first[bit_reversed_0] = M31(is_first_iteration as u32);
 
         (
             std::iter::once(is_first)
@@ -283,7 +286,7 @@ impl Claim {
 /// Evaluation component for the NTT circuit.
 ///
 /// This struct contains the necessary data to evaluate the NTT constraints
-/// during proof generation, including the claim parameters and lookup elements
+/// during proof generation. It includes claim parameters and lookup elements
 /// for range checking of modular arithmetic operations.
 ///
 /// The evaluation component ensures that all NTT operations (multiplication,
@@ -455,18 +458,20 @@ impl InteractionClaim {
     /// Generates the interaction trace that connects NTT computation with range checking.
     ///
     /// This method creates an interaction trace that ensures all modular arithmetic
-    /// operations in the NTT computation produce results within the expected range.
+    /// operations in the NTT computation produce results within the expected range [0, Q).
     /// It uses the lookup protocol to verify that remainders from modular operations
     /// are properly bounded.
     ///
     /// The interaction trace covers:
     /// - Remainder values from the initial butterfly phase (columns 3, 5, 7)
     /// - Remainder values from the recursive merging phase (every other column after the initial phase)
+    /// - Final NTT output values for linking with INTT input
     ///
     /// # Parameters
     ///
     /// - `trace`: The main NTT computation trace columns
-    /// - `lookup_elements`: The lookup elements for range checking
+    /// - `rc_lookup_elements`: The lookup elements for range checking
+    /// - `ntt_lookup_elements`: The lookup elements for NTT operations
     ///
     /// # Returns
     ///
@@ -484,15 +489,17 @@ impl InteractionClaim {
         let is_first = trace[0].clone();
         let trace = trace.iter().skip(1).collect::<Vec<_>>();
         // NTT output linking column moved to the end to match evaluation order
+        //
         // Phase 1: Interaction trace for the initial butterfly phase
         // Check remainder values from columns 3, 5, 7 of each 8-column group
+        // These columns contain the remainder values from modular arithmetic operations
         let first_ntt_size = 1 << (POLY_LOG_SIZE - 1);
-        for operation_elemnt_index in 0..first_ntt_size {
+        for operation_element_index in 0..first_ntt_size {
             for col in [3, 5, 7] {
                 let mut col_gen = logup_gen.new_col();
                 for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                     // Each butterfly operation uses 8 columns, so we access the remainder columns
-                    let result_packed = trace[operation_elemnt_index * 8 + col].data[vec_row];
+                    let result_packed = trace[operation_element_index * 8 + col].data[vec_row];
 
                     // Create the denominator using the lookup elements for range checking
                     let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
@@ -504,6 +511,7 @@ impl InteractionClaim {
 
         // Phase 2: Interaction trace for the merging phase
         // Check remainder values from every other column in the merging phase
+        // These columns contain the remainder values from modular arithmetic operations in the recursive merging
         let offset = first_ntt_size * 8;
         for col in (offset..trace.len() - POLY_SIZE).skip(1).step_by(2) {
             let mut col_gen = logup_gen.new_col();
@@ -522,7 +530,8 @@ impl InteractionClaim {
             col_gen.finalize_col();
         }
 
-        // Finally, link NTT output to INTT input with negative multiplicity
+        // Phase 3: Link NTT output to INTT input with negative multiplicity
+        // This ensures that the NTT output can be used as input for the inverse transform
         for col in trace[trace.len() - POLY_SIZE..].iter() {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
@@ -546,4 +555,6 @@ impl InteractionClaim {
 ///
 /// The NTT component performs polynomial evaluation from coefficient form
 /// to evaluation form using modular arithmetic operations with range checking.
+/// It supports polynomial sizes up to 1024 coefficients and uses the field Z_q
+/// where q = 12289.
 pub type Component = FrameworkComponent<Eval>;

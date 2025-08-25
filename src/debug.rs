@@ -59,6 +59,9 @@ pub fn assert_constraints(
         f_ntt: ntt::Claim {
             log_size: POLY_LOG_SIZE,
         },
+        f_ntt_butterfly: ntt::butterfly::Claim {
+            log_size: POLY_LOG_SIZE - 1,
+        },
         g_ntt: ntt::Claim {
             log_size: POLY_LOG_SIZE,
         },
@@ -78,10 +81,10 @@ pub fn assert_constraints(
             log_size: range_check_log_size - 1,
         },
         low_sig_bound_check: range_check::Claim {
-            log_size: SIGNATURE_BOUND.next_power_of_two().ilog2(),
+            log_size: LOW_SIG_BOUND.next_power_of_two().ilog2(),
         },
         high_sig_bound_check: range_check::Claim {
-            log_size: SIGNATURE_BOUND.next_power_of_two().ilog2(),
+            log_size: HIGH_SIG_BOUND.next_power_of_two().ilog2(),
         },
         range_check: range_check::Claim {
             log_size: range_check_log_size,
@@ -100,6 +103,7 @@ pub fn assert_constraints(
     let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
         &lookup_elements,
         &traces.f_ntt,
+        &traces.f_ntt_butterfly,
         &traces.g_ntt,
         &traces.mul,
         &traces.intt,
@@ -129,6 +133,15 @@ pub fn assert_constraints(
                 ntt_lookup_elements: lookup_elements.f_ntt.clone(),
             },
             interaction_claim.f_ntt.claimed_sum,
+        ),
+        &ntt::butterfly::Component::new(
+            &mut tree_span_provider,
+            ntt::butterfly::Eval {
+                claim: claim.f_ntt_butterfly,
+                rc_lookup_elements: lookup_elements.rc.clone(),
+                butterfly_output_lookup_elements: lookup_elements.f_ntt_butterfly.clone(),
+            },
+            interaction_claim.f_ntt_butterfly.claimed_sum,
         ),
         &ntt::Component::new(
             &mut tree_span_provider,
@@ -305,6 +318,7 @@ fn assert_components(
     trace: TreeVec<Vec<&Vec<M31>>>,
     components: (
         &FrameworkComponent<ntt::Eval>,
+        &FrameworkComponent<ntt::butterfly::Eval>,
         &FrameworkComponent<ntt::Eval>,
         &FrameworkComponent<mul::Eval>,
         &FrameworkComponent<intt::Eval>,
@@ -318,6 +332,7 @@ fn assert_components(
 ) {
     let (
         f_ntt,
+        f_ntt_butterfly,
         g_ntt,
         mul,
         intt,
@@ -330,6 +345,8 @@ fn assert_components(
     ) = components;
     println!("f_ntt");
     assert_component(f_ntt, &trace);
+    println!("f_ntt_butterfly");
+    assert_component(f_ntt_butterfly, &trace);
     println!("g_ntt");
     assert_component(g_ntt, &trace);
     println!("mul");
