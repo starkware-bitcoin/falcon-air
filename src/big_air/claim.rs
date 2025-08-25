@@ -15,9 +15,12 @@ use stwo::{
 
 #[derive(Debug, Clone)]
 pub struct BigClaim {
+    /// Claim for butterfly operations
+    pub f_ntt_butterfly: ntt::butterfly::Claim,
     /// Claim for NTT operations
     pub f_ntt: ntt::Claim,
-    pub f_ntt_butterfly: ntt::butterfly::Claim,
+    /// Claim for butterfly operations
+    pub g_ntt_butterfly: ntt::butterfly::Claim,
     /// Claim for NTT operations
     pub g_ntt: ntt::Claim,
     /// Claim for multiplication operations
@@ -40,10 +43,12 @@ pub struct BigClaim {
 
 #[derive(Debug, Clone)]
 pub struct AllTraces {
+    /// Trace columns from butterfly operations
+    pub f_ntt_butterfly: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace columns from NTT operations
     pub f_ntt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace columns from butterfly operations
-    pub f_ntt_butterfly: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+    pub g_ntt_butterfly: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace columns from NTT operations
     pub g_ntt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace columns from multiplication operations
@@ -67,8 +72,9 @@ pub struct AllTraces {
 impl AllTraces {
     /// Creates a new AllTraces instance with the provided traces.
     pub fn new(
-        f_ntt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         f_ntt_butterfly: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+        f_ntt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+        g_ntt_butterfly: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         g_ntt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         mul: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         intt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
@@ -80,8 +86,9 @@ impl AllTraces {
         range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     ) -> Self {
         Self {
-            f_ntt,
             f_ntt_butterfly,
+            f_ntt,
+            g_ntt_butterfly,
             g_ntt,
             mul,
             intt,
@@ -101,8 +108,9 @@ impl BigClaim {
     /// This ensures that the proof is deterministic and all components
     /// contribute to the randomness.
     pub fn mix_into(&self, channel: &mut impl Channel) {
-        self.f_ntt.mix_into(channel);
         self.f_ntt_butterfly.mix_into(channel);
+        self.f_ntt.mix_into(channel);
+        self.g_ntt_butterfly.mix_into(channel);
         self.g_ntt.mix_into(channel);
         self.mul.mix_into(channel);
         self.intt.mix_into(channel);
@@ -137,10 +145,15 @@ impl BigClaim {
         Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         AllTraces,
     ) {
-        let (f_ntt_trace, f_ntt_remainders, f_ntt_output) = self.f_ntt.gen_trace(s1, true);
         let (f_ntt_butterfly_trace, f_ntt_butterfly_remainders, f_ntt_butterfly_output) =
             self.f_ntt_butterfly.gen_trace(s1);
-        let (g_ntt_trace, g_ntt_remainders, g_ntt_output) = self.g_ntt.gen_trace(pk, true);
+        let (f_ntt_trace, f_ntt_remainders, f_ntt_output) =
+            self.f_ntt.gen_trace(&f_ntt_butterfly_output);
+
+        let (g_ntt_butterfly_trace, g_ntt_butterfly_remainders, g_ntt_butterfly_output) =
+            self.g_ntt_butterfly.gen_trace(pk);
+        let (g_ntt_trace, g_ntt_remainders, g_ntt_output) =
+            self.g_ntt.gen_trace(&g_ntt_butterfly_output);
         let (mul_trace, mul_remainders) = self.mul.gen_trace(&f_ntt_output, &g_ntt_output);
         let (intt_trace, intt_remainders, intt_output) = self
             .intt
@@ -171,8 +184,9 @@ impl BigClaim {
             .gen_trace(&[vec![M31(euclidean_norm_output_high)]]);
         let range_check_trace = self.range_check.gen_trace(
             &chain!(
-                f_ntt_remainders,
                 f_ntt_butterfly_remainders,
+                f_ntt_remainders,
+                g_ntt_butterfly_remainders,
                 g_ntt_remainders,
                 intt_remainders,
                 [mul_remainders],
@@ -182,8 +196,9 @@ impl BigClaim {
         );
         (
             chain!(
-                f_ntt_trace.clone(),
                 f_ntt_butterfly_trace.clone(),
+                f_ntt_trace.clone(),
+                g_ntt_butterfly_trace.clone(),
                 g_ntt_trace.clone(),
                 mul_trace.clone(),
                 intt_trace.clone(),
@@ -196,8 +211,9 @@ impl BigClaim {
             )
             .collect_vec(),
             AllTraces::new(
-                f_ntt_trace,
                 f_ntt_butterfly_trace,
+                f_ntt_trace,
+                g_ntt_butterfly_trace,
                 g_ntt_trace,
                 mul_trace,
                 intt_trace,

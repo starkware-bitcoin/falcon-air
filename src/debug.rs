@@ -4,7 +4,9 @@
 use std::ops::Deref;
 
 use itertools::Itertools;
+use num_traits::Zero;
 use stwo::core::ColumnVec;
+use stwo::core::fields::qm31::QM31;
 
 use stwo::core::channel::{Blake2sChannel, MerkleChannel};
 use stwo::core::fields::m31::M31;
@@ -56,10 +58,13 @@ pub fn assert_constraints(
 
     // Base trace.
     let claim = BigClaim {
+        f_ntt_butterfly: ntt::butterfly::Claim {
+            log_size: POLY_LOG_SIZE - 1,
+        },
         f_ntt: ntt::Claim {
             log_size: POLY_LOG_SIZE,
         },
-        f_ntt_butterfly: ntt::butterfly::Claim {
+        g_ntt_butterfly: ntt::butterfly::Claim {
             log_size: POLY_LOG_SIZE - 1,
         },
         g_ntt: ntt::Claim {
@@ -102,8 +107,9 @@ pub fn assert_constraints(
     let mut tree_builder = commitment_scheme.tree_builder();
     let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
         &lookup_elements,
-        &traces.f_ntt,
         &traces.f_ntt_butterfly,
+        &traces.f_ntt,
+        &traces.g_ntt_butterfly,
         &traces.g_ntt,
         &traces.mul,
         &traces.intt,
@@ -125,15 +131,6 @@ pub fn assert_constraints(
     ]);
 
     let components = (
-        &ntt::Component::new(
-            &mut tree_span_provider,
-            ntt::Eval {
-                claim: claim.f_ntt,
-                rc_lookup_elements: lookup_elements.rc.clone(),
-                ntt_lookup_elements: lookup_elements.f_ntt.clone(),
-            },
-            interaction_claim.f_ntt.claimed_sum,
-        ),
         &ntt::butterfly::Component::new(
             &mut tree_span_provider,
             ntt::butterfly::Eval {
@@ -146,9 +143,29 @@ pub fn assert_constraints(
         &ntt::Component::new(
             &mut tree_span_provider,
             ntt::Eval {
+                claim: claim.f_ntt,
+                rc_lookup_elements: lookup_elements.rc.clone(),
+                ntt_lookup_elements: lookup_elements.f_ntt.clone(),
+                butterfly_output_lookup_elements: lookup_elements.f_ntt_butterfly.clone(),
+            },
+            interaction_claim.f_ntt.claimed_sum,
+        ),
+        &ntt::butterfly::Component::new(
+            &mut tree_span_provider,
+            ntt::butterfly::Eval {
+                claim: claim.g_ntt_butterfly,
+                rc_lookup_elements: lookup_elements.rc.clone(),
+                butterfly_output_lookup_elements: lookup_elements.g_ntt_butterfly.clone(),
+            },
+            interaction_claim.g_ntt_butterfly.claimed_sum,
+        ),
+        &ntt::Component::new(
+            &mut tree_span_provider,
+            ntt::Eval {
                 claim: claim.g_ntt,
                 rc_lookup_elements: lookup_elements.rc.clone(),
                 ntt_lookup_elements: lookup_elements.g_ntt.clone(),
+                butterfly_output_lookup_elements: lookup_elements.g_ntt_butterfly.clone(),
             },
             interaction_claim.g_ntt.claimed_sum,
         ),
@@ -229,6 +246,11 @@ pub fn assert_constraints(
     );
 
     assert_components(commitment_scheme.trace_domain_evaluations(), components);
+    assert_eq!(
+        interaction_claim.claimed_sum(),
+        QM31::zero(),
+        "invalid logup sum"
+    );
 }
 
 #[derive(Default)]
@@ -317,6 +339,7 @@ impl<B: BackendForChannel<MC>, MC: MerkleChannel> TreeBuilder<B>
 fn assert_components(
     trace: TreeVec<Vec<&Vec<M31>>>,
     components: (
+        &FrameworkComponent<ntt::butterfly::Eval>,
         &FrameworkComponent<ntt::Eval>,
         &FrameworkComponent<ntt::butterfly::Eval>,
         &FrameworkComponent<ntt::Eval>,
@@ -331,8 +354,9 @@ fn assert_components(
     ),
 ) {
     let (
-        f_ntt,
         f_ntt_butterfly,
+        f_ntt,
+        g_ntt_butterfly,
         g_ntt,
         mul,
         intt,
@@ -343,10 +367,12 @@ fn assert_components(
         high_sig_bound_check,
         range_check,
     ) = components;
-    println!("f_ntt");
-    assert_component(f_ntt, &trace);
     println!("f_ntt_butterfly");
     assert_component(f_ntt_butterfly, &trace);
+    println!("f_ntt");
+    assert_component(f_ntt, &trace);
+    println!("g_ntt_butterfly");
+    assert_component(g_ntt_butterfly, &trace);
     println!("g_ntt");
     assert_component(g_ntt, &trace);
     println!("mul");

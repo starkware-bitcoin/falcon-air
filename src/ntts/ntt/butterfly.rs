@@ -18,8 +18,7 @@
 //! The NTT is the forward transform that converts from coefficient form to evaluation form,
 //! which is the inverse of the INTT (Inverse Number Theoretic Transform).
 
-use itertools::Itertools;
-use num_traits::{One, Zero};
+use num_traits::One;
 use stwo::{
     core::{
         ColumnVec,
@@ -38,8 +37,8 @@ use stwo_constraint_framework::{
 };
 
 use crate::{
-    POLY_LOG_SIZE, POLY_SIZE,
-    big_air::relation::{ButterflyLookupElements, NTTLookupElements, RCLookupElements},
+    POLY_SIZE,
+    big_air::relation::{ButterflyLookupElements, RCLookupElements},
     ntts::SQ1,
     zq::{Q, add::AddMod, mul::MulMod, sub::SubMod},
 };
@@ -82,7 +81,7 @@ impl Claim {
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<Vec<M31>>,
-        Vec<u32>,
+        Vec<Vec<u32>>,
     ) {
         // Initialize the input polynomial with values [1, 2, ..., POLY_SIZE]
         let mut poly = poly.to_vec();
@@ -90,7 +89,7 @@ impl Claim {
         // Apply bit-reversal permutation to prepare for in-place NTT computation
         // This ensures the polynomial is in the correct order for the butterfly operations
         bit_reverse(&mut poly);
-        let mut butterflied_poly = vec![];
+        let mut butterflied_poly = Vec::with_capacity(POLY_SIZE / 2);
         let mut f0_col = vec![];
         let mut f1_col = vec![];
         let mut f1_times_sq1_quotient_col = vec![];
@@ -139,8 +138,10 @@ impl Claim {
             f0_minus_f1_times_sq1_quotient_col.push(f0_minus_f1_times_sq1_quotient);
             f0_minus_f1_times_sq1_remainder_col.push(f0_minus_f1_times_sq1_remainder);
 
-            butterflied_poly.push(f0_plus_f1_times_sq1_remainder);
-            butterflied_poly.push(f0_minus_f1_times_sq1_remainder);
+            butterflied_poly.push(vec![
+                f0_plus_f1_times_sq1_remainder,
+                f0_minus_f1_times_sq1_remainder,
+            ]);
         });
 
         let remainders = vec![
@@ -267,16 +268,16 @@ impl FrameworkEval for Eval {
         )
         .evaluate(&self.rc_lookup_elements, &mut eval);
 
-        // eval.add_to_relation(RelationEntry::new(
-        //     &self.butterfly_output_lookup_elements,
-        //     -E::EF::zero(),
-        //     &[f0_plus_f1_times_sq1_remainder],
-        // ));
-        // eval.add_to_relation(RelationEntry::new(
-        //     &self.butterfly_output_lookup_elements,
-        //     -E::EF::zero(),
-        //     &[f0_minus_f1_times_sq1_remainder],
-        // ));
+        eval.add_to_relation(RelationEntry::new(
+            &self.butterfly_output_lookup_elements,
+            -E::EF::one(),
+            &[f0_plus_f1_times_sq1_remainder],
+        ));
+        eval.add_to_relation(RelationEntry::new(
+            &self.butterfly_output_lookup_elements,
+            -E::EF::one(),
+            &[f0_minus_f1_times_sq1_remainder],
+        ));
 
         eval.finalize_logup();
         eval
@@ -328,7 +329,7 @@ impl InteractionClaim {
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         rc_lookup_elements: &RCLookupElements,
-        butterfly_output_lookup_elements: &NTTLookupElements,
+        butterfly_output_lookup_elements: &ButterflyLookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
@@ -354,18 +355,18 @@ impl InteractionClaim {
             col_gen.finalize_col();
         }
 
-        // for col in [3, 5, 7] {
-        //     let mut col_gen = logup_gen.new_col();
-        //     for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-        //         // Each butterfly operation uses 8 columns, so we access the remainder columns
-        //         let result_packed = trace[col].data[vec_row];
+        for col in [5, 7] {
+            let mut col_gen = logup_gen.new_col();
+            for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+                // Each butterfly operation uses 8 columns, so we access the remainder columns
+                let result_packed = trace[col].data[vec_row];
 
-        //         // Create the denominator using the lookup elements for range checking
-        //         let denom: PackedQM31 = butterfly_output_lookup_elements.combine(&[result_packed]);
-        //         col_gen.write_frac(vec_row, PackedQM31::one(), denom);
-        //     }
-        //     col_gen.finalize_col();
-        // }
+                // Create the denominator using the lookup elements for range checking
+                let denom: PackedQM31 = butterfly_output_lookup_elements.combine(&[result_packed]);
+                col_gen.write_frac(vec_row, -PackedQM31::one(), denom);
+            }
+            col_gen.finalize_col();
+        }
         let (interaction_trace, claimed_sum) = logup_gen.finalize_last();
 
         (interaction_trace, InteractionClaim { claimed_sum })

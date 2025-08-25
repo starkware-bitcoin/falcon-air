@@ -10,8 +10,9 @@ relation!(SubLookupElements, 1);
 #[derive(Debug, Clone)]
 pub struct LookupElements {
     pub rc: RCLookupElements,
-    pub f_ntt: NTTLookupElements,
     pub f_ntt_butterfly: ButterflyLookupElements,
+    pub f_ntt: NTTLookupElements,
+    pub g_ntt_butterfly: ButterflyLookupElements,
     pub g_ntt: NTTLookupElements,
     pub mul: MulLookupElements,
     pub intt: INTTLookupElements,
@@ -25,8 +26,9 @@ impl LookupElements {
     pub fn draw(channel: &mut impl Channel) -> Self {
         Self {
             rc: RCLookupElements::draw(channel),
-            f_ntt: NTTLookupElements::draw(channel),
             f_ntt_butterfly: ButterflyLookupElements::draw(channel),
+            f_ntt: NTTLookupElements::draw(channel),
+            g_ntt_butterfly: ButterflyLookupElements::draw(channel),
             g_ntt: NTTLookupElements::draw(channel),
             mul: MulLookupElements::draw(channel),
             intt: INTTLookupElements::draw(channel),

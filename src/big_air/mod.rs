@@ -101,8 +101,11 @@ pub fn prove_falcon(
 
     // Generate and commit to main traces
     let claim = BigClaim {
-        f_ntt: ntt::Claim { log_size: 4 },
         f_ntt_butterfly: ntt::butterfly::Claim {
+            log_size: POLY_LOG_SIZE - 1,
+        },
+        f_ntt: ntt::Claim { log_size: 4 },
+        g_ntt_butterfly: ntt::butterfly::Claim {
             log_size: POLY_LOG_SIZE - 1,
         },
         g_ntt: ntt::Claim { log_size: 4 },
@@ -145,8 +148,9 @@ pub fn prove_falcon(
     // Generate and commit to interaction traces
     let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
         &lookup_elements,
-        &traces.f_ntt,
         &traces.f_ntt_butterfly,
+        &traces.f_ntt,
+        &traces.g_ntt_butterfly,
         &traces.g_ntt,
         &traces.mul,
         &traces.intt,
@@ -172,15 +176,6 @@ pub fn prove_falcon(
         range_check::RangeCheck::<HIGH_SIG_BOUND>::id(),
     ]);
 
-    let f_ntt_component = ntt::Component::new(
-        &mut tree_span_provider,
-        ntt::Eval {
-            claim: claim.f_ntt,
-            rc_lookup_elements: lookup_elements.rc.clone(),
-            ntt_lookup_elements: lookup_elements.f_ntt.clone(),
-        },
-        interaction_claim.f_ntt.claimed_sum,
-    );
     let f_ntt_butterfly_component = ntt::butterfly::Component::new(
         &mut tree_span_provider,
         ntt::butterfly::Eval {
@@ -190,12 +185,33 @@ pub fn prove_falcon(
         },
         interaction_claim.f_ntt_butterfly.claimed_sum,
     );
+    let f_ntt_component = ntt::Component::new(
+        &mut tree_span_provider,
+        ntt::Eval {
+            claim: claim.f_ntt,
+            rc_lookup_elements: lookup_elements.rc.clone(),
+            ntt_lookup_elements: lookup_elements.f_ntt.clone(),
+            butterfly_output_lookup_elements: lookup_elements.f_ntt_butterfly.clone(),
+        },
+        interaction_claim.f_ntt.claimed_sum,
+    );
+
+    let g_ntt_butterfly_component = ntt::butterfly::Component::new(
+        &mut tree_span_provider,
+        ntt::butterfly::Eval {
+            claim: claim.g_ntt_butterfly,
+            rc_lookup_elements: lookup_elements.rc.clone(),
+            butterfly_output_lookup_elements: lookup_elements.g_ntt_butterfly.clone(),
+        },
+        interaction_claim.g_ntt_butterfly.claimed_sum,
+    );
     let g_ntt_component = ntt::Component::new(
         &mut tree_span_provider,
         ntt::Eval {
             claim: claim.g_ntt,
             rc_lookup_elements: lookup_elements.rc.clone(),
             ntt_lookup_elements: lookup_elements.g_ntt.clone(),
+            butterfly_output_lookup_elements: lookup_elements.g_ntt_butterfly.clone(),
         },
         interaction_claim.g_ntt.claimed_sum,
     );
@@ -278,8 +294,9 @@ pub fn prove_falcon(
     {
         use crate::relation_tracker::{BigAirComponents, track_and_summarize_big_air_relations};
         let components = &BigAirComponents {
-            f_ntt: &f_ntt_component,
             f_ntt_butterfly: &f_ntt_butterfly_component,
+            f_ntt: &f_ntt_component,
+            g_ntt_butterfly: &g_ntt_butterfly_component,
             g_ntt: &g_ntt_component,
             mul: &mul_component,
             intt: &intt_component,
@@ -304,8 +321,9 @@ pub fn prove_falcon(
     // Generate the final STARK proof
     prove::<SimdBackend, _>(
         &[
-            &f_ntt_component,
             &f_ntt_butterfly_component,
+            &f_ntt_component,
+            &g_ntt_butterfly_component,
             &g_ntt_component,
             &mul_component,
             &intt_component,

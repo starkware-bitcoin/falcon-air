@@ -19,10 +19,12 @@ use stwo::{
 
 #[derive(Debug, Clone)]
 pub struct BigInteractionClaim {
+    /// Interaction claim for butterfly operations
+    pub f_ntt_butterfly: ntt::butterfly::InteractionClaim,
     /// Interaction claim for NTT operations
     pub f_ntt: ntt::InteractionClaim,
     /// Interaction claim for butterfly operations
-    pub f_ntt_butterfly: ntt::butterfly::InteractionClaim,
+    pub g_ntt_butterfly: ntt::butterfly::InteractionClaim,
     /// Interaction claim for NTT operations
     pub g_ntt: ntt::InteractionClaim,
     /// Interaction claim for multiplication operations
@@ -46,8 +48,9 @@ pub struct BigInteractionClaim {
 impl BigInteractionClaim {
     /// Mixes all interaction claims into the Fiat-Shamir channel.
     pub fn mix_into(&self, channel: &mut impl Channel) {
-        self.f_ntt.mix_into(channel);
         self.f_ntt_butterfly.mix_into(channel);
+        self.f_ntt.mix_into(channel);
+        self.g_ntt_butterfly.mix_into(channel);
         self.g_ntt.mix_into(channel);
         self.mul.mix_into(channel);
         self.intt.mix_into(channel);
@@ -64,8 +67,9 @@ impl BigInteractionClaim {
     /// This sum should equal zero for a valid proof, ensuring that
     /// all lookup relations are properly satisfied.
     pub fn claimed_sum(&self) -> QM31 {
-        self.f_ntt.claimed_sum
-            + self.f_ntt_butterfly.claimed_sum
+        self.f_ntt_butterfly.claimed_sum
+            + self.f_ntt.claimed_sum
+            + self.g_ntt_butterfly.claimed_sum
             + self.g_ntt.claimed_sum
             + self.mul.claimed_sum
             + self.intt.claimed_sum
@@ -92,8 +96,9 @@ impl BigInteractionClaim {
     /// Returns the combined interaction traces and the big interaction claim.
     pub fn gen_interaction_trace(
         lookup_elements: &LookupElements,
-        f_ntt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         f_ntt_butterfly_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
+        f_ntt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
+        g_ntt_butterfly_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         g_ntt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         mul_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         intt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
@@ -107,23 +112,32 @@ impl BigInteractionClaim {
         Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Self,
     ) {
+        let (f_ntt_butterfly_interaction_trace, f_ntt_butterfly_interaction_claim) =
+            ntt::butterfly::InteractionClaim::gen_interaction_trace(
+                f_ntt_butterfly_trace,
+                &lookup_elements.rc,
+                &lookup_elements.f_ntt_butterfly,
+            );
         let (f_ntt_interaction_trace, f_ntt_interaction_claim) =
             ntt::InteractionClaim::gen_interaction_trace(
                 f_ntt_trace,
                 &lookup_elements.rc,
                 &lookup_elements.f_ntt,
+                &lookup_elements.f_ntt_butterfly,
             );
-        let (f_ntt_butterfly_interaction_trace, f_ntt_butterfly_interaction_claim) =
+
+        let (g_ntt_butterfly_interaction_trace, g_ntt_butterfly_interaction_claim) =
             ntt::butterfly::InteractionClaim::gen_interaction_trace(
-                f_ntt_butterfly_trace,
+                g_ntt_butterfly_trace,
                 &lookup_elements.rc,
-                &lookup_elements.f_ntt,
+                &lookup_elements.g_ntt_butterfly,
             );
         let (g_ntt_interaction_trace, g_ntt_interaction_claim) =
             ntt::InteractionClaim::gen_interaction_trace(
                 g_ntt_trace,
                 &lookup_elements.rc,
                 &lookup_elements.g_ntt,
+                &lookup_elements.g_ntt_butterfly,
             );
         let (mul_interaction_trace, mul_interaction_claim) =
             mul::InteractionClaim::gen_interaction_trace(
@@ -177,8 +191,9 @@ impl BigInteractionClaim {
             );
         (
             chain!(
-                f_ntt_interaction_trace,
                 f_ntt_butterfly_interaction_trace,
+                f_ntt_interaction_trace,
+                g_ntt_butterfly_interaction_trace,
                 g_ntt_interaction_trace,
                 mul_interaction_trace,
                 intt_interaction_trace,
@@ -191,8 +206,9 @@ impl BigInteractionClaim {
             )
             .collect_vec(),
             Self {
-                f_ntt: f_ntt_interaction_claim,
                 f_ntt_butterfly: f_ntt_butterfly_interaction_claim,
+                f_ntt: f_ntt_interaction_claim,
+                g_ntt_butterfly: g_ntt_butterfly_interaction_claim,
                 g_ntt: g_ntt_interaction_claim,
                 mul: mul_interaction_claim,
                 intt: intt_interaction_claim,
