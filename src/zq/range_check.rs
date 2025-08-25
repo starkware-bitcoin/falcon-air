@@ -18,9 +18,8 @@ use stwo::{
         channel::Channel,
         fields::{
             m31::{BaseField, M31},
-            qm31::{QM31, SECURE_EXTENSION_DEGREE},
+            qm31::QM31,
         },
-        pcs::TreeVec,
         poly::circle::CanonicCoset,
     },
     prover::{
@@ -94,7 +93,6 @@ impl Claim {
                 trace[remainder.0 as usize] += M31::one();
             }
         }
-        println!("trace: {:?}", trace.len());
         CircleEvaluation::new(
             CanonicCoset::new(self.log_size).circle_domain(),
             BaseColumn::from_iter(trace),
@@ -174,8 +172,6 @@ impl InteractionClaim {
         let mut logup_gen = LogupTraceGenerator::new(log_size);
         let mut col_gen = logup_gen.new_col();
         let range_check_col = RangeCheck::<Q>::gen_column_simd();
-        println!("range_check_col: {:?}", range_check_col.data.len());
-        println!("range check name: {:?}", RangeCheck::<Q>::id());
 
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             // Get the result value from the trace (column 2)

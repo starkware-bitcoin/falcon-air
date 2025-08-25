@@ -15,7 +15,8 @@ pub struct LookupElements {
     pub intt: INTTLookupElements,
     pub sub: SubLookupElements,
     pub half_range_check: RCLookupElements,
-    pub sig_bound_check: RCLookupElements,
+    pub low_sig_bound_check: RCLookupElements,
+    pub high_sig_bound_check: RCLookupElements,
 }
 
 impl LookupElements {
@@ -28,7 +29,8 @@ impl LookupElements {
             intt: INTTLookupElements::draw(channel),
             sub: SubLookupElements::draw(channel),
             half_range_check: RCLookupElements::draw(channel),
-            sig_bound_check: RCLookupElements::draw(channel),
+            low_sig_bound_check: RCLookupElements::draw(channel),
+            high_sig_bound_check: RCLookupElements::draw(channel),
         }
     }
 }

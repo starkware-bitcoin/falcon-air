@@ -13,7 +13,7 @@ use stwo_constraint_framework::relation_tracker::{
     RelationSummary, RelationTrackerEntry, add_to_relation_entries,
 };
 
-use crate::{SIGNATURE_BOUND, zq::Q};
+use crate::{HIGH_SIG_BOUND, LOW_SIG_BOUND, zq::Q};
 
 /// Group all the *framework* components your AIR exposes. Each field can be a list so
 /// you can stuff as many sub-components as you like per module.
@@ -25,7 +25,8 @@ pub struct BigAirComponents<'a> {
     pub sub: &'a FrameworkComponent<crate::polys::sub::Eval>,
     pub euclidean_norm: &'a FrameworkComponent<crate::polys::euclidean_norm::Eval>,
     pub half_range_check: &'a FrameworkComponent<crate::zq::range_check::Eval<{ Q / 2 }>>,
-    pub sig_bound_check: &'a FrameworkComponent<crate::zq::range_check::Eval<SIGNATURE_BOUND>>,
+    pub low_sig_bound_check: &'a FrameworkComponent<crate::zq::range_check::Eval<LOW_SIG_BOUND>>,
+    pub high_sig_bound_check: &'a FrameworkComponent<crate::zq::range_check::Eval<HIGH_SIG_BOUND>>,
     pub range_check: &'a FrameworkComponent<crate::zq::range_check::Eval<Q>>,
 }
 
@@ -72,7 +73,8 @@ fn big_air_relation_entries(
         add_to_relation_entries(components.sub, trace),
         add_to_relation_entries(components.euclidean_norm, trace),
         add_to_relation_entries(components.half_range_check, trace),
-        add_to_relation_entries(components.sig_bound_check, trace),
+        add_to_relation_entries(components.low_sig_bound_check, trace),
+        add_to_relation_entries(components.high_sig_bound_check, trace),
         add_to_relation_entries(components.range_check, trace),
     )
     .collect()

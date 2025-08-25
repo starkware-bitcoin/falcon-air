@@ -6,7 +6,7 @@ use crate::{
 };
 use itertools::{Itertools, chain};
 use stwo::{
-    core::{channel::Channel, fields::m31::M31, pcs::TreeVec},
+    core::{channel::Channel, fields::m31::M31},
     prover::{
         backend::simd::SimdBackend,
         poly::{BitReversedOrder, circle::CircleEvaluation},
@@ -30,7 +30,9 @@ pub struct BigClaim {
     /// Claim for half range checking operations
     pub half_range_check: range_check::Claim,
     /// Claim for signature bound checking operations
-    pub sig_bound_check: range_check::Claim,
+    pub low_sig_bound_check: range_check::Claim,
+    /// Claim for signature bound checking operations
+    pub high_sig_bound_check: range_check::Claim,
     /// Claim for range checking operations
     pub range_check: range_check::Claim,
 }
@@ -52,7 +54,9 @@ pub struct AllTraces {
     /// Trace column from half range checking: multiplicities
     pub half_range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     /// Trace column from signature bound checking: multiplicities
-    pub sig_bound_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    pub low_sig_bound_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    /// Trace column from signature bound checking: multiplicities
+    pub high_sig_bound_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     /// Trace column from range checking: multiplicities
     pub range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
 }
@@ -67,7 +71,8 @@ impl AllTraces {
         sub: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         euclidean_norm: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         half_range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
-        sig_bound_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        low_sig_bound_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        high_sig_bound_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
         range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     ) -> Self {
         Self {
@@ -78,7 +83,8 @@ impl AllTraces {
             sub,
             euclidean_norm,
             half_range_check,
-            sig_bound_check,
+            low_sig_bound_check,
+            high_sig_bound_check,
             range_check,
         }
     }
@@ -97,7 +103,8 @@ impl BigClaim {
         self.sub.mix_into(channel);
         self.euclidean_norm.mix_into(channel);
         self.half_range_check.mix_into(channel);
-        self.sig_bound_check.mix_into(channel);
+        self.low_sig_bound_check.mix_into(channel);
+        self.high_sig_bound_check.mix_into(channel);
         self.range_check.mix_into(channel);
     }
 
@@ -147,15 +154,13 @@ impl BigClaim {
         let half_range_check_trace = self
             .half_range_check
             .gen_trace(&chain!([euclidean_norm_remainders]).collect_vec());
-        println!("sig boung");
-        let sig_bound_check_trace = self.sig_bound_check.gen_trace(&[vec![
-            M31(euclidean_norm_output_low),
-            M31(euclidean_norm_output_high),
-        ]]);
-        println!(
-            "sig_bound_check_trace: {:?}",
-            sig_bound_check_trace.data.len()
-        );
+
+        let low_sig_bound_check_trace = self
+            .low_sig_bound_check
+            .gen_trace(&[vec![M31(euclidean_norm_output_low)]]);
+        let high_sig_bound_check_trace = self
+            .high_sig_bound_check
+            .gen_trace(&[vec![M31(euclidean_norm_output_high)]]);
         let range_check_trace = self.range_check.gen_trace(
             &chain!(
                 f_ntt_remainders,
@@ -175,7 +180,8 @@ impl BigClaim {
                 sub_trace.clone(),
                 euclidean_norm_trace.clone(),
                 [half_range_check_trace.clone()],
-                [sig_bound_check_trace.clone()],
+                [low_sig_bound_check_trace.clone()],
+                [high_sig_bound_check_trace.clone()],
                 [range_check_trace.clone()]
             )
             .collect_vec(),
@@ -187,7 +193,8 @@ impl BigClaim {
                 sub_trace,
                 euclidean_norm_trace,
                 half_range_check_trace,
-                sig_bound_check_trace,
+                low_sig_bound_check_trace,
+                high_sig_bound_check_trace,
                 range_check_trace,
             ),
         )

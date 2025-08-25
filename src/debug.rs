@@ -27,7 +27,7 @@ use crate::polys::sub;
 use crate::polys::{euclidean_norm, mul};
 use crate::zq::range_check::RangeCheck;
 use crate::zq::{Q, range_check};
-use crate::{POLY_LOG_SIZE, POLY_SIZE, SIGNATURE_BOUND};
+use crate::{HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_LOG_SIZE, POLY_SIZE, SIGNATURE_BOUND};
 
 pub fn assert_constraints(
     s1: &[u32; POLY_SIZE],
@@ -40,13 +40,17 @@ pub fn assert_constraints(
     // Preprocessed trace.
     let range_check_preprocessed = range_check::RangeCheck::<Q>::gen_column_simd();
     let half_range_check_preprocessed = range_check::RangeCheck::<{ Q / 2 }>::gen_column_simd();
-    let sig_bound_check_preprocessed = range_check::RangeCheck::<{ 1 << 14 }>::gen_column_simd();
+    let low_sig_bound_check_preprocessed =
+        range_check::RangeCheck::<LOW_SIG_BOUND>::gen_column_simd();
+    let high_sig_bound_check_preprocessed =
+        range_check::RangeCheck::<HIGH_SIG_BOUND>::gen_column_simd();
 
     let mut tree_builder = commitment_scheme.tree_builder();
     tree_builder.extend_evals([
         range_check_preprocessed,
         half_range_check_preprocessed,
-        sig_bound_check_preprocessed,
+        low_sig_bound_check_preprocessed,
+        high_sig_bound_check_preprocessed,
     ]);
     tree_builder.finalize_interaction();
 
@@ -73,7 +77,10 @@ pub fn assert_constraints(
         half_range_check: range_check::Claim {
             log_size: range_check_log_size - 1,
         },
-        sig_bound_check: range_check::Claim {
+        low_sig_bound_check: range_check::Claim {
+            log_size: SIGNATURE_BOUND.next_power_of_two().ilog2(),
+        },
+        high_sig_bound_check: range_check::Claim {
             log_size: SIGNATURE_BOUND.next_power_of_two().ilog2(),
         },
         range_check: range_check::Claim {
@@ -99,7 +106,8 @@ pub fn assert_constraints(
         &traces.sub,
         &traces.euclidean_norm,
         &traces.half_range_check,
-        &traces.sig_bound_check,
+        &traces.low_sig_bound_check,
+        &traces.high_sig_bound_check,
         &traces.range_check,
     );
     tree_builder.extend_evals(interaction_trace);
@@ -108,7 +116,8 @@ pub fn assert_constraints(
     let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
         RangeCheck::<Q>::id(),
         RangeCheck::<{ Q / 2 }>::id(),
-        RangeCheck::<{ 1 << 14 }>::id(),
+        RangeCheck::<LOW_SIG_BOUND>::id(),
+        RangeCheck::<HIGH_SIG_BOUND>::id(),
     ]);
 
     let components = (
@@ -167,7 +176,8 @@ pub fn assert_constraints(
                 claim: claim.euclidean_norm,
                 half_rc_lookup_elements: lookup_elements.half_range_check.clone(),
                 s0_lookup_elements: lookup_elements.sub.clone(),
-                signature_bound_lookup_elements: lookup_elements.sig_bound_check.clone(),
+                low_sig_bound_check_lookup_elements: lookup_elements.low_sig_bound_check.clone(),
+                high_sig_bound_check_lookup_elements: lookup_elements.high_sig_bound_check.clone(),
             },
             interaction_claim.euclidean_norm.claimed_sum,
         ),
@@ -181,11 +191,19 @@ pub fn assert_constraints(
         ),
         &range_check::Component::new(
             &mut tree_span_provider,
-            range_check::Eval::<{ 1 << 14 }> {
-                claim: claim.sig_bound_check,
-                lookup_elements: lookup_elements.sig_bound_check.clone(),
+            range_check::Eval::<LOW_SIG_BOUND> {
+                claim: claim.low_sig_bound_check,
+                lookup_elements: lookup_elements.low_sig_bound_check.clone(),
             },
-            interaction_claim.sig_bound_check.claimed_sum,
+            interaction_claim.low_sig_bound_check.claimed_sum,
+        ),
+        &range_check::Component::new(
+            &mut tree_span_provider,
+            range_check::Eval::<HIGH_SIG_BOUND> {
+                claim: claim.high_sig_bound_check,
+                lookup_elements: lookup_elements.high_sig_bound_check.clone(),
+            },
+            interaction_claim.high_sig_bound_check.claimed_sum,
         ),
         &range_check::Component::new(
             &mut tree_span_provider,
@@ -293,7 +311,8 @@ fn assert_components(
         &FrameworkComponent<sub::Eval>,
         &FrameworkComponent<euclidean_norm::Eval>,
         &FrameworkComponent<range_check::Eval<{ Q / 2 }>>,
-        &FrameworkComponent<range_check::Eval<{ 1 << 14 }>>,
+        &FrameworkComponent<range_check::Eval<LOW_SIG_BOUND>>,
+        &FrameworkComponent<range_check::Eval<HIGH_SIG_BOUND>>,
         &FrameworkComponent<range_check::Eval<Q>>,
     ),
 ) {
@@ -305,7 +324,8 @@ fn assert_components(
         sub,
         euclidean_norm,
         half_range_check,
-        sig_bound_check,
+        low_sig_bound_check,
+        high_sig_bound_check,
         range_check,
     ) = components;
     println!("f_ntt");
@@ -322,8 +342,10 @@ fn assert_components(
     assert_component(euclidean_norm, &trace);
     println!("half_range_check");
     assert_component(half_range_check, &trace);
-    println!("sig_bound_check");
-    assert_component(sig_bound_check, &trace);
+    println!("low_sig_bound_check");
+    assert_component(low_sig_bound_check, &trace);
+    println!("high_sig_bound_check");
+    assert_component(high_sig_bound_check, &trace);
     println!("range_check");
     assert_component(range_check, &trace);
 }

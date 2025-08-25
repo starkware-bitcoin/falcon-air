@@ -16,10 +16,8 @@ pub mod claim;
 pub mod interaction_claim;
 pub mod relation;
 
-use std::cmp::max;
-
 use crate::{
-    POLY_LOG_SIZE, POLY_SIZE, SIGNATURE_BOUND,
+    HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_LOG_SIZE, POLY_SIZE,
     big_air::{claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements},
     ntts::{intt, ntt},
     polys::{euclidean_norm, mul, sub},
@@ -88,11 +86,16 @@ pub fn prove_falcon(
     let mut tree_builder = commitment_scheme.tree_builder();
     let range_check_preprocessed = range_check::RangeCheck::<Q>::gen_column_simd();
     let half_range_check_preprocessed = range_check::RangeCheck::<{ Q / 2 }>::gen_column_simd();
-    let sig_bound_check_preprocessed = range_check::RangeCheck::<{ 1 << 14 }>::gen_column_simd();
+
+    let low_sig_bound_check_preprocessed =
+        range_check::RangeCheck::<LOW_SIG_BOUND>::gen_column_simd();
+    let high_sig_bound_check_preprocessed =
+        range_check::RangeCheck::<HIGH_SIG_BOUND>::gen_column_simd();
     tree_builder.extend_evals([
         range_check_preprocessed,
         half_range_check_preprocessed,
-        sig_bound_check_preprocessed,
+        low_sig_bound_check_preprocessed,
+        high_sig_bound_check_preprocessed,
     ]);
     tree_builder.commit(channel);
 
@@ -113,8 +116,11 @@ pub fn prove_falcon(
         half_range_check: range_check::Claim {
             log_size: range_check_log_size - 1,
         },
-        sig_bound_check: range_check::Claim {
-            log_size: range_check_log_size,
+        low_sig_bound_check: range_check::Claim {
+            log_size: LOW_SIG_BOUND.next_power_of_two().ilog2(),
+        },
+        high_sig_bound_check: range_check::Claim {
+            log_size: HIGH_SIG_BOUND.next_power_of_two().ilog2(),
         },
         range_check: range_check::Claim {
             log_size: range_check_log_size,
@@ -143,7 +149,8 @@ pub fn prove_falcon(
         &traces.sub,
         &traces.euclidean_norm,
         &traces.half_range_check,
-        &traces.sig_bound_check,
+        &traces.low_sig_bound_check,
+        &traces.high_sig_bound_check,
         &traces.range_check,
     );
     drop(traces);
@@ -157,7 +164,8 @@ pub fn prove_falcon(
     let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
         range_check::RangeCheck::<Q>::id(),
         range_check::RangeCheck::<{ Q / 2 }>::id(),
-        range_check::RangeCheck::<{ 1 << 14 }>::id(),
+        range_check::RangeCheck::<LOW_SIG_BOUND>::id(),
+        range_check::RangeCheck::<HIGH_SIG_BOUND>::id(),
     ]);
 
     let f_ntt_component = ntt::Component::new(
@@ -215,7 +223,8 @@ pub fn prove_falcon(
             claim: claim.euclidean_norm,
             half_rc_lookup_elements: lookup_elements.half_range_check.clone(),
             s0_lookup_elements: lookup_elements.sub.clone(),
-            signature_bound_lookup_elements: lookup_elements.sig_bound_check.clone(),
+            low_sig_bound_check_lookup_elements: lookup_elements.low_sig_bound_check.clone(),
+            high_sig_bound_check_lookup_elements: lookup_elements.high_sig_bound_check.clone(),
         },
         interaction_claim.euclidean_norm.claimed_sum,
     );
@@ -227,13 +236,21 @@ pub fn prove_falcon(
         },
         interaction_claim.half_range_check.claimed_sum,
     );
-    let sig_bound_check_component = range_check::Component::new(
+    let low_sig_bound_check_component = range_check::Component::new(
         &mut tree_span_provider,
-        range_check::Eval::<{ 1 << 14 }> {
-            claim: claim.sig_bound_check,
-            lookup_elements: lookup_elements.sig_bound_check.clone(),
+        range_check::Eval::<LOW_SIG_BOUND> {
+            claim: claim.low_sig_bound_check,
+            lookup_elements: lookup_elements.low_sig_bound_check.clone(),
         },
-        interaction_claim.sig_bound_check.claimed_sum,
+        interaction_claim.low_sig_bound_check.claimed_sum,
+    );
+    let high_sig_bound_check_component = range_check::Component::new(
+        &mut tree_span_provider,
+        range_check::Eval::<HIGH_SIG_BOUND> {
+            claim: claim.high_sig_bound_check,
+            lookup_elements: lookup_elements.high_sig_bound_check.clone(),
+        },
+        interaction_claim.high_sig_bound_check.claimed_sum,
     );
     let range_check_component = range_check::Component::new(
         &mut tree_span_provider,
@@ -244,25 +261,26 @@ pub fn prove_falcon(
         interaction_claim.range_check.claimed_sum,
     );
 
-    // #[cfg(test)]
-    // {
-    //     use crate::relation_tracker::{BigAirComponents, track_and_summarize_big_air_relations};
-    //     let components = &BigAirComponents {
-    //         f_ntt: &f_ntt_component,
-    //         g_ntt: &g_ntt_component,
-    //         mul: &mul_component,
-    //         intt: &intt_component,
-    //         sub: &sub_component,
-    //         euclidean_norm: &euclidean_norm_component,
-    //         half_range_check: &half_range_check_component,
-    //         sig_bound_check: &sig_bound_check_component,
-    //         range_check: &range_check_component,
-    //     };
-    //     println!(
-    //         "summary: {:?}",
-    //         track_and_summarize_big_air_relations(&commitment_scheme, components)
-    //     );
-    // }
+    #[cfg(test)]
+    {
+        use crate::relation_tracker::{BigAirComponents, track_and_summarize_big_air_relations};
+        let components = &BigAirComponents {
+            f_ntt: &f_ntt_component,
+            g_ntt: &g_ntt_component,
+            mul: &mul_component,
+            intt: &intt_component,
+            sub: &sub_component,
+            euclidean_norm: &euclidean_norm_component,
+            half_range_check: &half_range_check_component,
+            low_sig_bound_check: &low_sig_bound_check_component,
+            high_sig_bound_check: &high_sig_bound_check_component,
+            range_check: &range_check_component,
+        };
+        println!(
+            "summary: {:?}",
+            track_and_summarize_big_air_relations(&commitment_scheme, components)
+        );
+    }
     assert_eq!(
         interaction_claim.claimed_sum(),
         QM31::zero(),
@@ -279,7 +297,8 @@ pub fn prove_falcon(
             &sub_component,
             &euclidean_norm_component,
             &half_range_check_component,
-            &sig_bound_check_component,
+            &low_sig_bound_check_component,
+            &high_sig_bound_check_component,
             &range_check_component,
         ],
         channel,
