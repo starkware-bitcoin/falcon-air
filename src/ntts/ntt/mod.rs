@@ -19,7 +19,8 @@
 //! which is the inverse of the INTT (Inverse Number Theoretic Transform).
 
 use itertools::Itertools;
-use num_traits::{One, Zero};
+
+use num_traits::One;
 use stwo::{
     core::{
         ColumnVec,
@@ -37,11 +38,12 @@ use stwo::{
     },
 };
 use stwo_constraint_framework::{
-    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry,
+    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEFTraitBound,
+    RelationEntry,
 };
 
 use crate::{
-    POLY_LOG_SIZE, POLY_SIZE,
+    POLY_LOG_SIZE,
     big_air::relation::{ButterflyLookupElements, NTTLookupElements, RCLookupElements},
     ntts::{
         ROOTS,
@@ -100,23 +102,19 @@ impl Claim {
     pub fn gen_trace(
         &self,
         input_polys: &[Vec<u32>],
+        stage: usize,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Vec<Vec<M31>>,
-        Vec<u32>,
+        Vec<Vec<u32>>,
     ) {
         // Initialize the input polynomial with values [1, 2, ..., POLY_SIZE]
-        let bit_reversed_0 = 0;
 
         // Prepare data structures for the merging phase
-        let mut polys = vec![vec![]; POLY_LOG_SIZE as usize];
-        polys[0] = input_polys.to_vec();
 
-        let mut trace = polys[0]
-            .iter()
-            .flat_map(|x| x.iter().cloned())
-            .collect_vec();
-
+        let mut output_polys = Vec::with_capacity(input_polys.len() / 2);
+        let mut trace = vec![vec![0; 1 << self.log_size]; 8 * (1 << stage)];
+        let mut remainders = vec![];
         // Phase 2: Recursive Merging Operations
         //
         // This phase implements the remaining NTT levels using recursive merging:
@@ -130,73 +128,74 @@ impl Claim {
         //
         // The roots of unity (w[2 * i]) are precomputed and stored in ROOTS[i][2 * j]
         // Each level doubles the polynomial size until we reach the final evaluation form
-        for i in 1..POLY_LOG_SIZE as usize {
-            for coeffs in polys[i - 1].clone().chunks_exact(2) {
-                let left = &coeffs[0]; // f0_ntt polynomial
-                let right = &coeffs[1]; // f1_ntt polynomial
+        for (i, coeffs) in input_polys.chunks_exact(2).enumerate() {
+            let left = &coeffs[0]; // f0_ntt polynomial
+            let right = &coeffs[1]; // f1_ntt polynomial
 
-                // Process each coefficient pair from the two polynomials
-                let mut merged_poly = vec![];
-                for (j, (coeff_left, coeff_right)) in left.iter().zip(right.iter()).enumerate() {
-                    // Get the appropriate root of unity for this position
-                    // Each level uses different roots from the precomputed ROOTS array
-                    let root = ROOTS[i][2 * j];
+            // Process each coefficient pair from the two polynomials
+            let mut merged_poly = vec![];
+            for (j, (coeff_left, coeff_right)) in left.iter().zip(right.iter()).enumerate() {
+                // Get the appropriate root of unity for this position
+                // Each level uses different roots from the precomputed ROOTS array
+                let root = ROOTS[stage][2 * j];
 
-                    // Step 1: Multiply f1_ntt coefficient by root of unity
-                    // f1_ntt[i] * w[2 * i] = quotient * Q + remainder
-                    let root_times_f1_quotient = (*coeff_right * root) / Q;
-                    let root_times_f1_remainder = (*coeff_right * root) % Q;
+                trace[8 * j][i] = *coeff_left;
+                trace[8 * j + 1][i] = *coeff_right;
 
-                    trace.push(root_times_f1_quotient);
-                    trace.push(root_times_f1_remainder);
+                // Step 1: Multiply f1_ntt coefficient by root of unity
+                // f1_ntt[i] * w[2 * i] = quotient * Q + remainder
+                let root_times_f1_quotient = (*coeff_right * root) / Q;
+                let root_times_f1_remainder = (*coeff_right * root) % Q;
 
-                    // Step 2: Add f0_ntt coefficient to the multiplied result
-                    // f0_ntt[i] + f1_ntt[i] * w[2 * i] = quotient * Q + remainder
-                    let f0_plus_root_times_f1_quotient =
-                        (*coeff_left + root_times_f1_remainder) / Q;
-                    let f0_plus_root_times_f1_remainder =
-                        (*coeff_left + root_times_f1_remainder) % Q;
+                trace[8 * j + 2][i] = root_times_f1_quotient;
+                trace[8 * j + 3][i] = root_times_f1_remainder;
 
-                    trace.push(f0_plus_root_times_f1_quotient);
-                    trace.push(f0_plus_root_times_f1_remainder);
+                // Step 2: Add f0_ntt coefficient to the multiplied result
+                // f0_ntt[i] + f1_ntt[i] * w[2 * i] = quotient * Q + remainder
+                let f0_plus_root_times_f1_quotient = (*coeff_left + root_times_f1_remainder) / Q;
+                let f0_plus_root_times_f1_remainder = (*coeff_left + root_times_f1_remainder) % Q;
 
-                    // Step 3: Subtract the multiplied result from f0_ntt coefficient
-                    // f0_ntt[i] - f1_ntt[i] * w[2 * i] = quotient * Q + remainder (with borrow handling)
-                    let f0_minus_root_times_f1_borrow =
-                        (*coeff_left < root_times_f1_remainder) as u32;
-                    let f0_minus_root_times_f1_remainder =
-                        (*coeff_left + f0_minus_root_times_f1_borrow * Q - root_times_f1_remainder)
-                            % Q;
-                    trace.push(f0_minus_root_times_f1_borrow);
-                    trace.push(f0_minus_root_times_f1_remainder);
+                trace[8 * j + 4][i] = f0_plus_root_times_f1_quotient;
+                trace[8 * j + 5][i] = f0_plus_root_times_f1_remainder;
 
-                    // Store the results for the next recursive level
-                    merged_poly.push(f0_plus_root_times_f1_remainder);
-                    merged_poly.push(f0_minus_root_times_f1_remainder);
-                }
-                polys[i].push(merged_poly);
+                // Step 3: Subtract the multiplied result from f0_ntt coefficient
+                // f0_ntt[i] - f1_ntt[i] * w[2 * i] = quotient * Q + remainder (with borrow handling)
+                let f0_minus_root_times_f1_borrow = (*coeff_left < root_times_f1_remainder) as u32;
+                let f0_minus_root_times_f1_remainder =
+                    (*coeff_left + f0_minus_root_times_f1_borrow * Q - root_times_f1_remainder) % Q;
+
+                trace[8 * j + 6][i] = f0_minus_root_times_f1_borrow;
+                trace[8 * j + 7][i] = f0_minus_root_times_f1_remainder;
+
+                // Store the results for the next recursive level
+                merged_poly.push(f0_plus_root_times_f1_remainder);
+                merged_poly.push(f0_minus_root_times_f1_remainder);
             }
+            output_polys.push(merged_poly);
         }
-        let trace = trace.into_iter().map(|val| {
-            let mut col = vec![M31::zero(); 1 << self.log_size];
-            col[bit_reversed_0] = M31(val);
-            col
-        });
-        let remainders = trace.clone().skip(1).skip(POLY_SIZE).step_by(2);
+
+        for i in 0..1 << stage {
+            remainders.extend(trace[8 * i + 3].iter().map(|x| M31(*x)));
+            remainders.extend(trace[8 * i + 5].iter().map(|x| M31(*x)));
+            remainders.extend(trace[8 * i + 7].iter().map(|x| M31(*x)));
+        }
+
+        // end of loop
+        let trace = trace
+            .into_iter()
+            .map(|col| col.into_iter().map(M31).collect_vec())
+            .collect_vec();
 
         // Convert the trace values to circle evaluations for the proof system
         let domain = CanonicCoset::new(self.log_size).circle_domain();
-        let mut is_first = vec![M31(0); 1 << self.log_size];
-        is_first[bit_reversed_0] = M31(1);
+        let mut is_filled = vec![M31(0); 1 << self.log_size];
+        (0..1 << (POLY_LOG_SIZE as usize - stage - 1)).for_each(|i| {
+            is_filled[i] = M31(1);
+        });
 
         (
-            std::iter::once(is_first)
+            std::iter::once(is_filled)
                 .chain(trace)
-                .chain(polys.last().unwrap()[0].iter().map(|x| {
-                    let mut col = vec![M31::zero(); 1 << self.log_size];
-                    col[bit_reversed_0] = M31(*x);
-                    col
-                }))
                 .map(|val| {
                     CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
                         domain,
@@ -204,8 +203,8 @@ impl Claim {
                     )
                 })
                 .collect::<Vec<_>>(),
-            remainders.collect(),
-            polys.last().unwrap()[0].clone(),
+            vec![remainders],
+            output_polys,
         )
     }
 }
@@ -223,12 +222,54 @@ impl Claim {
 pub struct Eval {
     /// The claim parameters defining the NTT computation
     pub claim: Claim,
+    pub poly_size: usize,
     /// Lookup elements for range checking modular arithmetic operations
     pub rc_lookup_elements: RCLookupElements,
     /// Lookup elements for NTT operations
     pub ntt_lookup_elements: NTTLookupElements,
     /// Lookup elements for butterfly output
-    pub butterfly_output_lookup_elements: ButterflyLookupElements,
+    pub input_lookup_elements: InputLookupElements,
+}
+
+#[derive(Debug, Clone)]
+pub enum InputLookupElements {
+    NTT(NTTLookupElements),
+    Butterfly(ButterflyLookupElements),
+}
+
+impl<F, EF> Relation<F, EF> for InputLookupElements
+where
+    F: Clone,
+    EF: RelationEFTraitBound<F>,
+{
+    fn combine(&self, values: &[F]) -> EF {
+        match self {
+            InputLookupElements::NTT(lookup_elements) => lookup_elements.combine(values),
+            InputLookupElements::Butterfly(lookup_elements) => lookup_elements.combine(values),
+        }
+    }
+
+    fn get_name(&self) -> &str {
+        match self {
+            InputLookupElements::NTT(lookup_elements) => {
+                <NTTLookupElements as Relation<F, EF>>::get_name(lookup_elements)
+            }
+            InputLookupElements::Butterfly(lookup_elements) => {
+                <ButterflyLookupElements as Relation<F, EF>>::get_name(lookup_elements)
+            }
+        }
+    }
+
+    fn get_size(&self) -> usize {
+        match self {
+            InputLookupElements::NTT(lookup_elements) => {
+                <NTTLookupElements as Relation<F, EF>>::get_size(lookup_elements)
+            }
+            InputLookupElements::Butterfly(lookup_elements) => {
+                <ButterflyLookupElements as Relation<F, EF>>::get_size(lookup_elements)
+            }
+        }
+    }
 }
 
 impl FrameworkEval for Eval {
@@ -253,84 +294,61 @@ impl FrameworkEval for Eval {
     /// 2. Evaluates recursive merging operations using roots of unity
     /// 3. Verifies all modular arithmetic operations through range checking
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
-        let mut base_f_ntt = Vec::with_capacity(POLY_SIZE);
-        let is_first = eval.next_trace_mask();
+        let is_filled = eval.next_trace_mask();
+        let mut merges = MergeNTT::default();
 
-        // Phase 1: Evaluate initial butterfly operations
-        // This corresponds to the first phase of trace generation
-        for _ in 0..1 << (POLY_LOG_SIZE - 1) {
-            let f_even = eval.next_trace_mask();
-            let f_odd = eval.next_trace_mask();
+        // Process each coefficient pair using the appropriate root of unity
+        for j in 0..self.poly_size {
+            let root = ROOTS[self.poly_size.ilog2() as usize][2 * j];
+            let coeff_left = eval.next_trace_mask();
+            let coeff_right = eval.next_trace_mask();
+
             eval.add_to_relation(RelationEntry::new(
-                &self.butterfly_output_lookup_elements,
-                E::EF::from(is_first.clone()),
-                &[f_even.clone()],
+                &self.input_lookup_elements,
+                E::EF::from(is_filled.clone()),
+                &[coeff_left.clone()],
             ));
+
             eval.add_to_relation(RelationEntry::new(
-                &self.butterfly_output_lookup_elements,
-                E::EF::from(is_first.clone()),
-                &[f_odd.clone()],
+                &self.input_lookup_elements,
+                E::EF::from(is_filled.clone()),
+                &[coeff_right.clone()],
             ));
-            base_f_ntt.push(vec![f_even, f_odd]);
-        }
-        // Phase 2: Evaluate merging operations
-        // Initialize the polynomial array for all NTT levels
-        let mut poly: Vec<Vec<Vec<E::F>>> = vec![vec![]; POLY_LOG_SIZE as usize];
-        poly[0] = base_f_ntt;
 
-        // Perform POLY_LOG_SIZE - 1 merging iterations to complete the NTT
-        // Each iteration doubles the polynomial size until we reach the final result
-        for i in 1..POLY_LOG_SIZE as usize {
-            // Process pairs of polynomials from the previous iteration
-            for coeffs in poly[i - 1].clone().chunks_exact(2) {
-                let mut merges = MergeNTT::default();
-                let left = &coeffs[0]; // f0_ntt polynomial
-                let right = &coeffs[1]; // f1_ntt polynomial
-
-                // Process each coefficient pair using the appropriate root of unity
-                for (j, (coeff_left, coeff_right)) in left.iter().zip(right.iter()).enumerate() {
-                    let root = ROOTS[i][2 * j];
-
-                    // Step 1: Multiply f1_ntt coefficient by root of unity
-                    let root_times_f1 = MulMod::<E>::new(
-                        coeff_right.clone(),
-                        E::F::from(M31(root)),
-                        eval.next_trace_mask(),
-                        eval.next_trace_mask(),
-                    );
-                    // Step 2: Add f0_ntt coefficient to the multiplied result
-                    let f0_plus_root_times_f1 = AddMod::<E>::new(
-                        coeff_left.clone(),
-                        root_times_f1.r.clone(),
-                        eval.next_trace_mask(),
-                        eval.next_trace_mask(),
-                    );
-                    // Step 3: Subtract the multiplied result from f0_ntt coefficient
-                    let f0_minus_root_times_f1 = SubMod::<E>::new(
-                        coeff_left.clone(),
-                        root_times_f1.r.clone(),
-                        eval.next_trace_mask(),
-                        eval.next_trace_mask(),
-                    );
-                    // Create a merge operation combining all three steps
-                    let merge =
-                        Merge::new(root_times_f1, f0_plus_root_times_f1, f0_minus_root_times_f1);
-                    merges.push(merge);
-                }
-
-                // Evaluate the merge operations and store the result
-                let merged_poly = MergeNTT::evaluate(merges, &self.rc_lookup_elements, &mut eval);
-                poly[i].push(merged_poly);
-            }
+            // Step 1: Multiply f1_ntt coefficient by root of unity
+            let root_times_f1 = MulMod::<E>::new(
+                coeff_right.clone(),
+                E::F::from(M31(root)),
+                eval.next_trace_mask(),
+                eval.next_trace_mask(),
+            );
+            // Step 2: Add f0_ntt coefficient to the multiplied result
+            let f0_plus_root_times_f1 = AddMod::<E>::new(
+                coeff_left.clone(),
+                root_times_f1.r.clone(),
+                eval.next_trace_mask(),
+                eval.next_trace_mask(),
+            );
+            // Step 3: Subtract the multiplied result from f0_ntt coefficient
+            let f0_minus_root_times_f1 = SubMod::<E>::new(
+                coeff_left.clone(),
+                root_times_f1.r.clone(),
+                eval.next_trace_mask(),
+                eval.next_trace_mask(),
+            );
+            // Create a merge operation combining all three steps
+            let merge = Merge::new(root_times_f1, f0_plus_root_times_f1, f0_minus_root_times_f1);
+            merges.push(merge);
         }
 
-        poly.last().unwrap()[0].clone().into_iter().for_each(|x| {
-            let output_col = eval.next_trace_mask();
-            eval.add_constraint(x - output_col.clone());
+        // Evaluate the merge operations and store the result
+        let merged_poly = MergeNTT::evaluate(merges, &self.rc_lookup_elements, &mut eval);
+
+        merged_poly.into_iter().for_each(|x| {
             eval.add_to_relation(RelationEntry::new(
                 &self.ntt_lookup_elements,
-                -E::EF::from(is_first.clone()),
-                &[output_col],
+                -E::EF::from(is_filled.clone()),
+                &[x],
             ));
         });
 
@@ -385,7 +403,8 @@ impl InteractionClaim {
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         rc_lookup_elements: &RCLookupElements,
         ntt_lookup_elements: &NTTLookupElements,
-        butterfly_output_lookup_elements: &ButterflyLookupElements,
+        input_lookup_elements: &InputLookupElements,
+        stage: usize,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
@@ -394,47 +413,41 @@ impl InteractionClaim {
         let mut logup_gen = LogupTraceGenerator::new(log_size);
         let is_first = trace[0].clone();
         let trace = trace.iter().skip(1).collect::<Vec<_>>();
-        for col in trace.iter().take(POLY_SIZE) {
-            let mut col_gen = logup_gen.new_col();
-            for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-                let v = col.data[vec_row]; // must have all lanes populated
-                let denom: PackedQM31 = butterfly_output_lookup_elements.combine(&[v]);
-                col_gen.write_frac(vec_row, PackedQM31::from(is_first.data[vec_row]), denom);
+
+        for coeff_nb in 0..1 << stage {
+            for col_offset in [0, 1] {
+                let mut col_gen = logup_gen.new_col();
+                for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+                    let v = trace[coeff_nb * 8 + col_offset].data[vec_row]; // must have all lanes populated
+                    let denom: PackedQM31 = input_lookup_elements.combine(&[v]);
+                    col_gen.write_frac(vec_row, PackedQM31::from(is_first.data[vec_row]), denom);
+                }
+                col_gen.finalize_col();
             }
-            col_gen.finalize_col();
         }
 
-        // Phase 2: Interaction trace for the merging phase
-        // Check remainder values from every other column in the merging phase
-        // These columns contain the remainder values from modular arithmetic operations in the recursive merging
-        let offset = POLY_SIZE;
-        for col in (offset..trace.len() - POLY_SIZE).skip(1).step_by(2) {
-            let mut col_gen = logup_gen.new_col();
-            for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-                // Access remainder columns from the merging phase
-                let result_packed = trace[col].data[vec_row];
-
-                // Create the denominator using the lookup elements for range checking
-                let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
-
-                // The numerator is 1 (we want to check that remainder is in the range)
-                let numerator = PackedQM31::one();
-
-                col_gen.write_frac(vec_row, numerator, denom);
+        for coeff_nb in 0..1 << stage {
+            for col_offset in [3, 5, 7] {
+                let mut col_gen = logup_gen.new_col();
+                for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+                    let v = trace[coeff_nb * 8 + col_offset].data[vec_row]; // must have all lanes populated
+                    let denom: PackedQM31 = rc_lookup_elements.combine(&[v]);
+                    col_gen.write_frac(vec_row, PackedQM31::one(), denom);
+                }
+                col_gen.finalize_col();
             }
-            col_gen.finalize_col();
         }
 
-        // Phase 3: Link NTT output to INTT input with negative multiplicity
-        // This ensures that the NTT output can be used as input for the inverse transform
-        for col in trace[trace.len() - POLY_SIZE..].iter() {
-            let mut col_gen = logup_gen.new_col();
-            for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-                let v = col.data[vec_row]; // must have all lanes populated
-                let denom: PackedQM31 = ntt_lookup_elements.combine(&[v]);
-                col_gen.write_frac(vec_row, -PackedQM31::from(is_first.data[vec_row]), denom);
+        for coeff_nb in 0..1 << stage {
+            for col_offset in [5, 7] {
+                let mut col_gen = logup_gen.new_col();
+                for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
+                    let v = trace[coeff_nb * 8 + col_offset].data[vec_row]; // must have all lanes populated
+                    let denom: PackedQM31 = ntt_lookup_elements.combine(&[v]);
+                    col_gen.write_frac(vec_row, -PackedQM31::from(is_first.data[vec_row]), denom);
+                }
+                col_gen.finalize_col();
             }
-            col_gen.finalize_col();
         }
 
         let (interaction_trace, claimed_sum) = logup_gen.finalize_last();

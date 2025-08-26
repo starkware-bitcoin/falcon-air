@@ -23,8 +23,12 @@ use crate::{
     polys::{euclidean_norm, mul, sub},
     zq::{Q, range_check},
 };
+use itertools::Itertools;
 use num_traits::Zero;
-use stwo::core::fields::qm31::QM31;
+use stwo::{
+    core::fields::qm31::QM31,
+    prover::{ComponentProver, backend::simd::m31::LOG_N_LANES},
+};
 
 use stwo::{
     core::{
@@ -99,16 +103,33 @@ pub fn prove_falcon(
     ]);
     tree_builder.commit(channel);
 
+    let f_ntt_merges = (1..POLY_LOG_SIZE)
+        .map(|log_size| {
+            let log_size = POLY_LOG_SIZE - log_size - 1;
+            ntt::Claim {
+                log_size: std::cmp::max(LOG_N_LANES, log_size),
+            }
+        })
+        .collect_vec();
+    let g_ntt_merges = (1..POLY_LOG_SIZE)
+        .map(|log_size| {
+            let log_size = POLY_SIZE / (1 << (log_size + 1));
+            ntt::Claim {
+                log_size: std::cmp::max(LOG_N_LANES, log_size.ilog2()),
+            }
+        })
+        .collect_vec();
+
     // Generate and commit to main traces
     let claim = BigClaim {
         f_ntt_butterfly: ntt::butterfly::Claim {
             log_size: POLY_LOG_SIZE - 1,
         },
-        f_ntt: ntt::Claim { log_size: 4 },
+        f_ntt_merges,
         g_ntt_butterfly: ntt::butterfly::Claim {
             log_size: POLY_LOG_SIZE - 1,
         },
-        g_ntt: ntt::Claim { log_size: 4 },
+        g_ntt_merges,
         mul: mul::Claim {
             log_size: POLY_LOG_SIZE,
         },
@@ -149,9 +170,9 @@ pub fn prove_falcon(
     let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
         &lookup_elements,
         &traces.f_ntt_butterfly,
-        &traces.f_ntt,
+        &traces.f_ntt_merges,
         &traces.g_ntt_butterfly,
-        &traces.g_ntt,
+        &traces.g_ntt_merges,
         &traces.mul,
         &traces.intt,
         &traces.sub,
@@ -161,7 +182,7 @@ pub fn prove_falcon(
         &traces.high_sig_bound_check,
         &traces.range_check,
     );
-    drop(traces);
+
     interaction_claim.mix_into(channel);
 
     let mut tree_builder = commitment_scheme.tree_builder();
@@ -185,16 +206,29 @@ pub fn prove_falcon(
         },
         interaction_claim.f_ntt_butterfly.claimed_sum,
     );
-    let f_ntt_component = ntt::Component::new(
-        &mut tree_span_provider,
-        ntt::Eval {
-            claim: claim.f_ntt,
-            rc_lookup_elements: lookup_elements.rc.clone(),
-            ntt_lookup_elements: lookup_elements.f_ntt.clone(),
-            butterfly_output_lookup_elements: lookup_elements.f_ntt_butterfly.clone(),
-        },
-        interaction_claim.f_ntt.claimed_sum,
-    );
+    let f_ntt_merges_components = claim
+        .f_ntt_merges
+        .into_iter()
+        .zip_eq(interaction_claim.f_ntt_merges.iter())
+        .enumerate()
+        .map(|(i, (merge, interaction_claim))| {
+            ntt::Component::new(
+                &mut tree_span_provider,
+                ntt::Eval {
+                    claim: merge,
+                    rc_lookup_elements: lookup_elements.rc.clone(),
+                    ntt_lookup_elements: lookup_elements.f_ntt.clone(),
+                    input_lookup_elements: if i == 0 {
+                        ntt::InputLookupElements::Butterfly(lookup_elements.f_ntt_butterfly.clone())
+                    } else {
+                        ntt::InputLookupElements::NTT(lookup_elements.f_ntt.clone())
+                    },
+                    poly_size: 1 << (i + 1),
+                },
+                interaction_claim.claimed_sum,
+            )
+        })
+        .collect_vec();
 
     let g_ntt_butterfly_component = ntt::butterfly::Component::new(
         &mut tree_span_provider,
@@ -205,16 +239,29 @@ pub fn prove_falcon(
         },
         interaction_claim.g_ntt_butterfly.claimed_sum,
     );
-    let g_ntt_component = ntt::Component::new(
-        &mut tree_span_provider,
-        ntt::Eval {
-            claim: claim.g_ntt,
-            rc_lookup_elements: lookup_elements.rc.clone(),
-            ntt_lookup_elements: lookup_elements.g_ntt.clone(),
-            butterfly_output_lookup_elements: lookup_elements.g_ntt_butterfly.clone(),
-        },
-        interaction_claim.g_ntt.claimed_sum,
-    );
+    let g_ntt_merges_components = claim
+        .g_ntt_merges
+        .into_iter()
+        .zip_eq(interaction_claim.g_ntt_merges.iter())
+        .enumerate()
+        .map(|(i, (merge, interaction_claim))| {
+            ntt::Component::new(
+                &mut tree_span_provider,
+                ntt::Eval {
+                    claim: merge,
+                    rc_lookup_elements: lookup_elements.rc.clone(),
+                    ntt_lookup_elements: lookup_elements.g_ntt.clone(),
+                    input_lookup_elements: if i == 0 {
+                        ntt::InputLookupElements::Butterfly(lookup_elements.g_ntt_butterfly.clone())
+                    } else {
+                        ntt::InputLookupElements::NTT(lookup_elements.g_ntt.clone())
+                    },
+                    poly_size: 1 << (i + 1),
+                },
+                interaction_claim.claimed_sum,
+            )
+        })
+        .collect_vec();
     let mul_component = mul::Component::new(
         &mut tree_span_provider,
         mul::Eval {
@@ -293,11 +340,12 @@ pub fn prove_falcon(
     #[cfg(test)]
     {
         use crate::relation_tracker::{BigAirComponents, track_and_summarize_big_air_relations};
+
         let components = &BigAirComponents {
             f_ntt_butterfly: &f_ntt_butterfly_component,
-            f_ntt: &f_ntt_component,
+            f_ntt_merges: &f_ntt_merges_components,
             g_ntt_butterfly: &g_ntt_butterfly_component,
-            g_ntt: &g_ntt_component,
+            g_ntt_merges: &g_ntt_merges_components,
             mul: &mul_component,
             intt: &intt_component,
             sub: &sub_component,
@@ -307,10 +355,10 @@ pub fn prove_falcon(
             high_sig_bound_check: &high_sig_bound_check_component,
             range_check: &range_check_component,
         };
-        println!(
-            "summary: {:?}",
-            track_and_summarize_big_air_relations(&commitment_scheme, components)
-        );
+        let summary = track_and_summarize_big_air_relations(&commitment_scheme, components);
+        // std::fs::write("summary.txt", format!("{:?}", summary)).unwrap();
+
+        println!("summary: {:?}", summary);
     }
     assert_eq!(
         interaction_claim.claimed_sum(),
@@ -318,25 +366,25 @@ pub fn prove_falcon(
         "invalid logup sum"
     );
 
+    let mut components: Vec<&dyn ComponentProver<SimdBackend>> = vec![];
+    components.push(&f_ntt_butterfly_component);
+    for merge in f_ntt_merges_components.iter() {
+        components.push(merge);
+    }
+    components.push(&g_ntt_butterfly_component);
+    for merge in g_ntt_merges_components.iter() {
+        components.push(merge);
+    }
+    components.push(&mul_component);
+    components.push(&intt_component);
+    components.push(&sub_component);
+    components.push(&euclidean_norm_component);
+    components.push(&half_range_check_component);
+    components.push(&low_sig_bound_check_component);
+    components.push(&high_sig_bound_check_component);
+    components.push(&range_check_component);
     // Generate the final STARK proof
-    prove::<SimdBackend, _>(
-        &[
-            &f_ntt_butterfly_component,
-            &f_ntt_component,
-            &g_ntt_butterfly_component,
-            &g_ntt_component,
-            &mul_component,
-            &intt_component,
-            &sub_component,
-            &euclidean_norm_component,
-            &half_range_check_component,
-            &low_sig_bound_check_component,
-            &high_sig_bound_check_component,
-            &range_check_component,
-        ],
-        channel,
-        commitment_scheme,
-    )
+    prove::<SimdBackend, _>(&components, channel, commitment_scheme)
     // Err(ProvingError::ConstraintsNotSatisfied)
 }
 

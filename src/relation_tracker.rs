@@ -1,5 +1,5 @@
 // src/debug/relations.rs
-use itertools::{Itertools, chain};
+use itertools::Itertools;
 use stwo::core::fields::m31::M31;
 use stwo::core::pcs::TreeVec;
 use stwo::core::poly::circle::CanonicCoset;
@@ -19,9 +19,9 @@ use crate::{HIGH_SIG_BOUND, LOW_SIG_BOUND, zq::Q};
 /// you can stuff as many sub-components as you like per module.
 pub struct BigAirComponents<'a> {
     pub f_ntt_butterfly: &'a FrameworkComponent<crate::ntts::ntt::butterfly::Eval>,
-    pub f_ntt: &'a FrameworkComponent<crate::ntts::ntt::Eval>,
+    pub f_ntt_merges: &'a [FrameworkComponent<crate::ntts::ntt::Eval>],
     pub g_ntt_butterfly: &'a FrameworkComponent<crate::ntts::ntt::butterfly::Eval>,
-    pub g_ntt: &'a FrameworkComponent<crate::ntts::ntt::Eval>,
+    pub g_ntt_merges: &'a [FrameworkComponent<crate::ntts::ntt::Eval>],
     pub mul: &'a FrameworkComponent<crate::polys::mul::Eval>,
     pub intt: &'a FrameworkComponent<crate::ntts::intt::Eval>,
     pub sub: &'a FrameworkComponent<crate::polys::sub::Eval>,
@@ -67,19 +67,29 @@ fn big_air_relation_entries(
     components: &BigAirComponents,
     trace: &TreeVec<Vec<&Vec<M31>>>,
 ) -> Vec<RelationTrackerEntry> {
-    chain!(
-        add_to_relation_entries(components.f_ntt_butterfly, trace),
-        add_to_relation_entries(components.f_ntt, trace),
-        add_to_relation_entries(components.g_ntt_butterfly, trace),
-        add_to_relation_entries(components.g_ntt, trace),
-        add_to_relation_entries(components.mul, trace),
-        add_to_relation_entries(components.intt, trace),
-        add_to_relation_entries(components.sub, trace),
-        add_to_relation_entries(components.euclidean_norm, trace),
-        add_to_relation_entries(components.half_range_check, trace),
-        add_to_relation_entries(components.low_sig_bound_check, trace),
-        add_to_relation_entries(components.high_sig_bound_check, trace),
-        add_to_relation_entries(components.range_check, trace),
-    )
-    .collect()
+    let mut entries = vec![];
+    entries.extend(add_to_relation_entries(components.f_ntt_butterfly, trace));
+
+    for merge in components.f_ntt_merges.iter() {
+        entries.extend(add_to_relation_entries(merge, trace));
+    }
+    entries.extend(add_to_relation_entries(components.g_ntt_butterfly, trace));
+    for merge in components.g_ntt_merges.iter() {
+        entries.extend(add_to_relation_entries(merge, trace));
+    }
+    entries.extend(add_to_relation_entries(components.mul, trace));
+    entries.extend(add_to_relation_entries(components.intt, trace));
+    entries.extend(add_to_relation_entries(components.sub, trace));
+    entries.extend(add_to_relation_entries(components.euclidean_norm, trace));
+    entries.extend(add_to_relation_entries(components.half_range_check, trace));
+    entries.extend(add_to_relation_entries(
+        components.low_sig_bound_check,
+        trace,
+    ));
+    entries.extend(add_to_relation_entries(
+        components.high_sig_bound_check,
+        trace,
+    ));
+    entries.extend(add_to_relation_entries(components.range_check, trace));
+    entries
 }
