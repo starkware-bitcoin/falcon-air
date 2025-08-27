@@ -26,7 +26,9 @@ pub struct BigClaim {
     /// Claim for multiplication operations
     pub mul: mul::Claim,
     /// Claim for INTT operations
-    pub intt: intt::Claim,
+    pub intt_merges: Vec<intt::Claim>,
+    /// Claim for INTT operations
+    pub ibutterfly: intt::ibutterfly::Claim,
     /// Claim for subtraction operations
     pub sub: sub::Claim,
     /// Claim for euclidean norm operations
@@ -54,7 +56,9 @@ pub struct AllTraces {
     /// Trace columns from multiplication operations
     pub mul: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace columns from INTT operations
-    pub intt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+    pub intt_merges: Vec<Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>>,
+    /// Trace columns from INTT operations
+    pub ibutterfly: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace columns from subtraction operations
     pub sub: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     /// Trace columns from euclidean norm operations
@@ -77,7 +81,8 @@ impl AllTraces {
         g_ntt_butterfly: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         g_ntt_merges: Vec<Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>>,
         mul: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
-        intt: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+        intt_merges: Vec<Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>>,
+        ibutterfly: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         sub: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         euclidean_norm: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         half_range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
@@ -91,7 +96,8 @@ impl AllTraces {
             g_ntt_butterfly,
             g_ntt_merges,
             mul,
-            intt,
+            intt_merges,
+            ibutterfly,
             sub,
             euclidean_norm,
             half_range_check,
@@ -117,7 +123,10 @@ impl BigClaim {
             merge.mix_into(channel);
         });
         self.mul.mix_into(channel);
-        self.intt.mix_into(channel);
+        self.intt_merges.iter().for_each(|merge| {
+            merge.mix_into(channel);
+        });
+        self.ibutterfly.mix_into(channel);
         self.sub.mix_into(channel);
         self.euclidean_norm.mix_into(channel);
         self.half_range_check.mix_into(channel);
@@ -184,12 +193,25 @@ impl BigClaim {
         );
         range_check_input.push(mul_remainders.clone());
 
-        let (intt_trace, intt_remainders, intt_output) = self
-            .intt
-            .gen_trace(mul_remainders.iter().map(|r| r.0).collect_vec());
-        range_check_input.extend(intt_remainders);
+        let mut intt_outputs = vec![vec![mul_remainders.into_iter().map(|r| r.0).collect_vec()]];
+        let mut intt_traces = vec![];
 
-        let (sub_trace, sub_remainders) = self.sub.gen_trace(msg_point, &intt_output);
+        for (i, split) in self.intt_merges.iter().enumerate() {
+            let (intt_trace, intt_remainders, intt_output) =
+                split.gen_trace(&intt_outputs[i], i + 1);
+            range_check_input.extend(intt_remainders);
+            intt_outputs.push(intt_output);
+            intt_traces.push(intt_trace);
+        }
+
+        let ibutterfly_input = intt_outputs.last().unwrap().clone();
+
+        let (ibutterfly_trace, ibutterfly_remainders, ibutterflied_poly) =
+            self.ibutterfly.gen_trace(&ibutterfly_input);
+
+        range_check_input.extend(ibutterfly_remainders);
+
+        let (sub_trace, sub_remainders) = self.sub.gen_trace(msg_point, &ibutterflied_poly);
         range_check_input.push(sub_remainders.clone());
 
         let (
@@ -224,7 +246,8 @@ impl BigClaim {
                 g_ntt_butterfly_trace.clone(),
                 g_ntt_traces.iter().flatten().cloned().collect_vec(),
                 mul_trace.clone(),
-                intt_trace.clone(),
+                intt_traces.iter().flatten().cloned().collect_vec(),
+                ibutterfly_trace.clone(),
                 sub_trace.clone(),
                 euclidean_norm_trace.clone(),
                 [half_range_check_trace.clone()],
@@ -239,7 +262,8 @@ impl BigClaim {
                 g_ntt_butterfly_trace,
                 g_ntt_traces,
                 mul_trace,
-                intt_trace,
+                intt_traces,
+                ibutterfly_trace,
                 sub_trace,
                 euclidean_norm_trace,
                 half_range_check_trace,

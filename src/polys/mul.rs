@@ -271,6 +271,7 @@ impl FrameworkEval for Eval {
             &self.mul_lookup_elements,
             -E::EF::one(),
             &[r],
+            // &[E::F::zero()],
         ));
         eval.finalize_logup();
         eval

@@ -22,6 +22,7 @@ use stwo_constraint_framework::{
     assert_constraints_on_trace,
 };
 
+use crate::big_air::relation::INTTInputLookupElements;
 use crate::big_air::{
     claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements,
 };
@@ -73,6 +74,11 @@ pub fn assert_constraints(
             }
         })
         .collect_vec();
+    let intt_merges = (1..POLY_LOG_SIZE)
+        .map(|log_size| intt::Claim {
+            log_size: std::cmp::max(LOG_N_LANES, log_size),
+        })
+        .collect_vec();
     // Generate and commit to main traces
     let claim = BigClaim {
         f_ntt_butterfly: ntt::butterfly::Claim {
@@ -86,7 +92,10 @@ pub fn assert_constraints(
         mul: mul::Claim {
             log_size: POLY_LOG_SIZE,
         },
-        intt: intt::Claim { log_size: 4 },
+        intt_merges,
+        ibutterfly: intt::ibutterfly::Claim {
+            log_size: POLY_LOG_SIZE - 1,
+        },
         sub: sub::Claim {
             log_size: POLY_LOG_SIZE,
         },
@@ -123,7 +132,8 @@ pub fn assert_constraints(
         &traces.g_ntt_butterfly,
         &traces.g_ntt_merges,
         &traces.mul,
-        &traces.intt,
+        &traces.intt_merges,
+        &traces.ibutterfly,
         &traces.sub,
         &traces.euclidean_norm,
         &traces.half_range_check,
@@ -217,22 +227,45 @@ pub fn assert_constraints(
         },
         interaction_claim.mul.claimed_sum,
     );
-    let intt_component = intt::Component::new(
+    let intt_components = claim
+        .intt_merges
+        .into_iter()
+        .zip_eq(interaction_claim.intt_merges.iter())
+        .enumerate()
+        .map(|(i, (merge, interaction_claim))| {
+            intt::Component::new(
+                &mut tree_span_provider,
+                intt::Eval {
+                    claim: merge,
+                    rc_lookup_elements: lookup_elements.rc.clone(),
+                    input_lookup_elements: if i == 0 {
+                        INTTInputLookupElements::Mul(lookup_elements.mul.clone())
+                    } else {
+                        INTTInputLookupElements::INTTOutput(lookup_elements.intt.clone())
+                    },
+                    intt_lookup_elements: lookup_elements.intt.clone(),
+                    poly_size: 1 << (POLY_LOG_SIZE as usize - i),
+                },
+                interaction_claim.claimed_sum,
+            )
+        })
+        .collect_vec();
+    let ibutterfly_component = intt::ibutterfly::Component::new(
         &mut tree_span_provider,
-        intt::Eval {
-            claim: claim.intt,
+        intt::ibutterfly::Eval {
+            claim: claim.ibutterfly,
             rc_lookup_elements: lookup_elements.rc.clone(),
-            mul_lookup_elements: lookup_elements.mul.clone(),
-            intt_lookup_elements: lookup_elements.intt.clone(),
+            intt_output_lookup_elements: lookup_elements.intt.clone(),
+            ibutterfly_output_lookup_elements: lookup_elements.ibutterfly.clone(),
         },
-        interaction_claim.intt.claimed_sum,
+        interaction_claim.ibutterfly.claimed_sum,
     );
     let sub_component = sub::Component::new(
         &mut tree_span_provider,
         sub::Eval {
             claim: claim.sub,
             rc_lookup_elements: lookup_elements.rc.clone(),
-            intt_lookup_elements: lookup_elements.intt.clone(),
+            ibutterfly_lookup_elements: lookup_elements.ibutterfly.clone(),
             sub_lookup_elements: lookup_elements.sub.clone(),
         },
         interaction_claim.sub.claimed_sum,
@@ -287,7 +320,8 @@ pub fn assert_constraints(
         &g_ntt_butterfly_component,
         g_ntt_merges_components.as_slice(),
         &mul_component,
-        &intt_component,
+        intt_components.as_slice(),
+        &ibutterfly_component,
         &sub_component,
         &euclidean_norm_component,
         &half_range_check_component,
@@ -395,7 +429,8 @@ fn assert_components(
         &FrameworkComponent<ntt::butterfly::Eval>,
         &[FrameworkComponent<ntt::Eval>],
         &FrameworkComponent<mul::Eval>,
-        &FrameworkComponent<intt::Eval>,
+        &[FrameworkComponent<intt::Eval>],
+        &FrameworkComponent<intt::ibutterfly::Eval>,
         &FrameworkComponent<sub::Eval>,
         &FrameworkComponent<euclidean_norm::Eval>,
         &FrameworkComponent<range_check::Eval<{ Q / 2 }>>,
@@ -410,7 +445,8 @@ fn assert_components(
         g_ntt_butterfly,
         g_ntt_merges,
         mul,
-        intt,
+        intt_components,
+        ibutterfly,
         sub,
         euclidean_norm,
         half_range_check,
@@ -435,7 +471,12 @@ fn assert_components(
     println!("mul");
     assert_component(mul, &trace);
     println!("intt");
-    assert_component(intt, &trace);
+    for (i, intt) in intt_components.iter().enumerate() {
+        println!("split {}", i);
+        assert_component(intt, &trace);
+    }
+    println!("ibutterfly");
+    assert_component(ibutterfly, &trace);
     println!("sub");
     assert_component(sub, &trace);
     println!("euclidean_norm");

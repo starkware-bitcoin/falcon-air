@@ -1,6 +1,6 @@
 use crate::{
     HIGH_SIG_BOUND, LOW_SIG_BOUND,
-    big_air::relation::LookupElements,
+    big_air::relation::{INTTInputLookupElements, LookupElements},
     ntts::{intt, ntt},
     polys::{euclidean_norm, mul, sub},
     zq::{Q, range_check},
@@ -30,7 +30,9 @@ pub struct BigInteractionClaim {
     /// Interaction claim for multiplication operations
     pub mul: mul::InteractionClaim,
     /// Interaction claim for INTT operations
-    pub intt: intt::InteractionClaim,
+    pub intt_merges: Vec<intt::InteractionClaim>,
+    /// Interaction claim for INTT operations
+    pub ibutterfly: intt::ibutterfly::InteractionClaim,
     /// Interaction claim for subtraction operations
     pub sub: sub::InteractionClaim,
     /// Interaction claim for euclidean norm operations
@@ -57,7 +59,10 @@ impl BigInteractionClaim {
             merge.mix_into(channel);
         });
         self.mul.mix_into(channel);
-        self.intt.mix_into(channel);
+        self.intt_merges.iter().for_each(|merge| {
+            merge.mix_into(channel);
+        });
+        self.ibutterfly.mix_into(channel);
         self.sub.mix_into(channel);
         self.euclidean_norm.mix_into(channel);
         self.half_range_check.mix_into(channel);
@@ -84,7 +89,12 @@ impl BigInteractionClaim {
                 .map(|merge| merge.claimed_sum)
                 .sum::<QM31>()
             + self.mul.claimed_sum
-            + self.intt.claimed_sum
+            + self
+                .intt_merges
+                .iter()
+                .map(|merge| merge.claimed_sum)
+                .sum::<QM31>()
+            + self.ibutterfly.claimed_sum
             + self.sub.claimed_sum
             + self.euclidean_norm.claimed_sum
             + self.half_range_check.claimed_sum
@@ -113,7 +123,8 @@ impl BigInteractionClaim {
         g_ntt_butterfly_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         g_ntt_merges_traces: &[Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>],
         mul_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        intt_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
+        intt_merges_traces: &[Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>],
+        ibutterfly_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         sub_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         euclidean_norm_trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         half_range_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
@@ -181,18 +192,36 @@ impl BigInteractionClaim {
                 &lookup_elements.g_ntt,
                 &lookup_elements.mul,
             );
-        let (intt_interaction_trace, intt_interaction_claim) =
-            intt::InteractionClaim::gen_interaction_trace(
-                intt_trace,
+        let mut intt_interaction_traces = vec![];
+        let mut intt_interaction_claims = vec![];
+        for (i, merge) in intt_merges_traces.iter().enumerate() {
+            let (intt_interaction_trace, intt_interaction_claim) =
+                intt::InteractionClaim::gen_interaction_trace(
+                    merge,
+                    &lookup_elements.rc,
+                    &if i == 0 {
+                        INTTInputLookupElements::Mul(lookup_elements.mul.clone())
+                    } else {
+                        INTTInputLookupElements::INTTOutput(lookup_elements.intt.clone())
+                    },
+                    &lookup_elements.intt,
+                    i + 1,
+                );
+            intt_interaction_traces.push(intt_interaction_trace);
+            intt_interaction_claims.push(intt_interaction_claim);
+        }
+        let (ibutterfly_interaction_trace, ibutterfly_interaction_claim) =
+            intt::ibutterfly::InteractionClaim::gen_interaction_trace(
+                ibutterfly_trace,
                 &lookup_elements.rc,
-                &lookup_elements.mul,
                 &lookup_elements.intt,
+                &lookup_elements.ibutterfly,
             );
         let (sub_interaction_trace, sub_interaction_claim) =
             sub::InteractionClaim::gen_interaction_trace(
                 sub_trace,
                 &lookup_elements.rc,
-                &lookup_elements.intt,
+                &lookup_elements.ibutterfly,
                 &lookup_elements.sub,
             );
         let (euclidean_norm_interaction_trace, euclidean_norm_interaction_claim) =
@@ -238,7 +267,12 @@ impl BigInteractionClaim {
                     .cloned()
                     .collect_vec(),
                 mul_interaction_trace,
-                intt_interaction_trace,
+                intt_interaction_traces
+                    .iter()
+                    .flatten()
+                    .cloned()
+                    .collect_vec(),
+                ibutterfly_interaction_trace,
                 sub_interaction_trace,
                 euclidean_norm_interaction_trace,
                 half_range_check_interaction_trace,
@@ -253,7 +287,8 @@ impl BigInteractionClaim {
                 g_ntt_butterfly: g_ntt_butterfly_interaction_claim,
                 g_ntt_merges: g_ntt_interaction_claims,
                 mul: mul_interaction_claim,
-                intt: intt_interaction_claim,
+                intt_merges: intt_interaction_claims,
+                ibutterfly: ibutterfly_interaction_claim,
                 sub: sub_interaction_claim,
                 euclidean_norm: euclidean_norm_interaction_claim,
                 half_range_check: half_range_check_interaction_claim,

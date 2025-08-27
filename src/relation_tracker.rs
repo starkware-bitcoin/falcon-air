@@ -23,7 +23,8 @@ pub struct BigAirComponents<'a> {
     pub g_ntt_butterfly: &'a FrameworkComponent<crate::ntts::ntt::butterfly::Eval>,
     pub g_ntt_merges: &'a [FrameworkComponent<crate::ntts::ntt::Eval>],
     pub mul: &'a FrameworkComponent<crate::polys::mul::Eval>,
-    pub intt: &'a FrameworkComponent<crate::ntts::intt::Eval>,
+    pub intt_merges: &'a [FrameworkComponent<crate::ntts::intt::Eval>],
+    pub ibutterfly: &'a FrameworkComponent<crate::ntts::intt::ibutterfly::Eval>,
     pub sub: &'a FrameworkComponent<crate::polys::sub::Eval>,
     pub euclidean_norm: &'a FrameworkComponent<crate::polys::euclidean_norm::Eval>,
     pub half_range_check: &'a FrameworkComponent<crate::zq::range_check::Eval<{ Q / 2 }>>,
@@ -78,7 +79,10 @@ fn big_air_relation_entries(
         entries.extend(add_to_relation_entries(merge, trace));
     }
     entries.extend(add_to_relation_entries(components.mul, trace));
-    entries.extend(add_to_relation_entries(components.intt, trace));
+    for merge in components.intt_merges.iter() {
+        entries.extend(add_to_relation_entries(merge, trace));
+    }
+    entries.extend(add_to_relation_entries(components.ibutterfly, trace));
     entries.extend(add_to_relation_entries(components.sub, trace));
     entries.extend(add_to_relation_entries(components.euclidean_norm, trace));
     entries.extend(add_to_relation_entries(components.half_range_check, trace));

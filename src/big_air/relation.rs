@@ -7,6 +7,7 @@ relation!(GNTTLookupElements, 1);
 relation!(ButterflyLookupElements, 1);
 relation!(MulLookupElements, 1);
 relation!(INTTLookupElements, 1);
+relation!(IButterflyLookupElements, 1);
 relation!(SubLookupElements, 1);
 
 #[derive(Debug, Clone)]
@@ -58,6 +59,55 @@ where
         }
     }
 }
+#[derive(Debug, Clone)]
+pub enum INTTInputLookupElements {
+    Mul(MulLookupElements),
+    INTTOutput(INTTLookupElements),
+}
+
+impl INTTInputLookupElements {
+    pub fn ibutterfly_draw(channel: &mut impl Channel) -> Self {
+        Self::Mul(MulLookupElements::draw(channel))
+    }
+
+    pub fn mul_draw(channel: &mut impl Channel) -> Self {
+        Self::INTTOutput(INTTLookupElements::draw(channel))
+    }
+}
+impl<F, EF> Relation<F, EF> for INTTInputLookupElements
+where
+    F: Clone,
+    EF: RelationEFTraitBound<F>,
+{
+    fn combine(&self, values: &[F]) -> EF {
+        match self {
+            INTTInputLookupElements::Mul(lookup_elements) => lookup_elements.combine(values),
+            INTTInputLookupElements::INTTOutput(lookup_elements) => lookup_elements.combine(values),
+        }
+    }
+
+    fn get_name(&self) -> &str {
+        match self {
+            INTTInputLookupElements::Mul(lookup_elements) => {
+                <MulLookupElements as Relation<F, EF>>::get_name(lookup_elements)
+            }
+            INTTInputLookupElements::INTTOutput(lookup_elements) => {
+                <INTTLookupElements as Relation<F, EF>>::get_name(lookup_elements)
+            }
+        }
+    }
+
+    fn get_size(&self) -> usize {
+        match self {
+            INTTInputLookupElements::Mul(lookup_elements) => {
+                <MulLookupElements as Relation<F, EF>>::get_size(lookup_elements)
+            }
+            INTTInputLookupElements::INTTOutput(lookup_elements) => {
+                <INTTLookupElements as Relation<F, EF>>::get_size(lookup_elements)
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct LookupElements {
@@ -68,6 +118,7 @@ pub struct LookupElements {
     pub g_ntt: NTTLookupElements,
     pub mul: MulLookupElements,
     pub intt: INTTLookupElements,
+    pub ibutterfly: IButterflyLookupElements,
     pub sub: SubLookupElements,
     pub half_range_check: RCLookupElements,
     pub low_sig_bound_check: RCLookupElements,
@@ -84,6 +135,7 @@ impl LookupElements {
             g_ntt: NTTLookupElements::g_draw(channel),
             mul: MulLookupElements::draw(channel),
             intt: INTTLookupElements::draw(channel),
+            ibutterfly: IButterflyLookupElements::draw(channel),
             sub: SubLookupElements::draw(channel),
             half_range_check: RCLookupElements::draw(channel),
             low_sig_bound_check: RCLookupElements::draw(channel),

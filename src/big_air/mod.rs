@@ -18,7 +18,11 @@ pub mod relation;
 
 use crate::{
     HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_LOG_SIZE, POLY_SIZE,
-    big_air::{claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements},
+    big_air::{
+        claim::BigClaim,
+        interaction_claim::BigInteractionClaim,
+        relation::{INTTInputLookupElements, LookupElements},
+    },
     ntts::{intt, ntt},
     polys::{euclidean_norm, mul, sub},
     zq::{Q, range_check},
@@ -113,13 +117,18 @@ pub fn prove_falcon(
         .collect_vec();
     let g_ntt_merges = (1..POLY_LOG_SIZE)
         .map(|log_size| {
-            let log_size = POLY_SIZE / (1 << (log_size + 1));
+            let log_size = POLY_LOG_SIZE - log_size - 1;
             ntt::Claim {
-                log_size: std::cmp::max(LOG_N_LANES, log_size.ilog2()),
+                log_size: std::cmp::max(LOG_N_LANES, log_size),
             }
         })
         .collect_vec();
 
+    let intt_merges = (1..POLY_LOG_SIZE)
+        .map(|log_size| intt::Claim {
+            log_size: std::cmp::max(LOG_N_LANES, log_size),
+        })
+        .collect_vec();
     // Generate and commit to main traces
     let claim = BigClaim {
         f_ntt_butterfly: ntt::butterfly::Claim {
@@ -133,7 +142,10 @@ pub fn prove_falcon(
         mul: mul::Claim {
             log_size: POLY_LOG_SIZE,
         },
-        intt: intt::Claim { log_size: 4 },
+        intt_merges,
+        ibutterfly: intt::ibutterfly::Claim {
+            log_size: POLY_LOG_SIZE - 1,
+        },
         sub: sub::Claim {
             log_size: POLY_LOG_SIZE,
         },
@@ -174,7 +186,8 @@ pub fn prove_falcon(
         &traces.g_ntt_butterfly,
         &traces.g_ntt_merges,
         &traces.mul,
-        &traces.intt,
+        &traces.intt_merges,
+        &traces.ibutterfly,
         &traces.sub,
         &traces.euclidean_norm,
         &traces.half_range_check,
@@ -273,22 +286,46 @@ pub fn prove_falcon(
         },
         interaction_claim.mul.claimed_sum,
     );
-    let intt_component = intt::Component::new(
+    let intt_merges_components = claim
+        .intt_merges
+        .into_iter()
+        .zip_eq(interaction_claim.intt_merges.iter())
+        .enumerate()
+        .map(|(i, (merge, interaction_claim))| {
+            intt::Component::new(
+                &mut tree_span_provider,
+                intt::Eval {
+                    claim: merge,
+                    rc_lookup_elements: lookup_elements.rc.clone(),
+                    input_lookup_elements: if i == 0 {
+                        INTTInputLookupElements::Mul(lookup_elements.mul.clone())
+                    } else {
+                        INTTInputLookupElements::INTTOutput(lookup_elements.intt.clone())
+                    },
+                    intt_lookup_elements: lookup_elements.intt.clone(),
+                    poly_size: 1 << (POLY_LOG_SIZE as usize - i),
+                },
+                interaction_claim.claimed_sum,
+            )
+        })
+        .collect_vec();
+
+    let ibutterfly_component = intt::ibutterfly::Component::new(
         &mut tree_span_provider,
-        intt::Eval {
-            claim: claim.intt,
+        intt::ibutterfly::Eval {
+            claim: claim.ibutterfly,
             rc_lookup_elements: lookup_elements.rc.clone(),
-            mul_lookup_elements: lookup_elements.mul.clone(),
-            intt_lookup_elements: lookup_elements.intt.clone(),
+            intt_output_lookup_elements: lookup_elements.intt.clone(),
+            ibutterfly_output_lookup_elements: lookup_elements.ibutterfly.clone(),
         },
-        interaction_claim.intt.claimed_sum,
+        interaction_claim.ibutterfly.claimed_sum,
     );
     let sub_component = sub::Component::new(
         &mut tree_span_provider,
         sub::Eval {
             claim: claim.sub,
             rc_lookup_elements: lookup_elements.rc.clone(),
-            intt_lookup_elements: lookup_elements.intt.clone(),
+            ibutterfly_lookup_elements: lookup_elements.ibutterfly.clone(),
             sub_lookup_elements: lookup_elements.sub.clone(),
         },
         interaction_claim.sub.claimed_sum,
@@ -347,7 +384,8 @@ pub fn prove_falcon(
             g_ntt_butterfly: &g_ntt_butterfly_component,
             g_ntt_merges: &g_ntt_merges_components,
             mul: &mul_component,
-            intt: &intt_component,
+            intt_merges: &intt_merges_components,
+            ibutterfly: &ibutterfly_component,
             sub: &sub_component,
             euclidean_norm: &euclidean_norm_component,
             half_range_check: &half_range_check_component,
@@ -356,9 +394,9 @@ pub fn prove_falcon(
             range_check: &range_check_component,
         };
         let summary = track_and_summarize_big_air_relations(&commitment_scheme, components);
-        // std::fs::write("summary.txt", format!("{:?}", summary)).unwrap();
+        std::fs::write("summary.txt", format!("{:?}", summary)).unwrap();
 
-        println!("summary: {:?}", summary);
+        // println!("summary: {:?}", summary);
     }
     assert_eq!(
         interaction_claim.claimed_sum(),
@@ -376,7 +414,10 @@ pub fn prove_falcon(
         components.push(merge);
     }
     components.push(&mul_component);
-    components.push(&intt_component);
+    for merge in intt_merges_components.iter() {
+        components.push(merge);
+    }
+    components.push(&ibutterfly_component);
     components.push(&sub_component);
     components.push(&euclidean_norm_component);
     components.push(&half_range_check_component);

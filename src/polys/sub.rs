@@ -64,7 +64,7 @@ use stwo_constraint_framework::{
 };
 
 use crate::{
-    big_air::relation::{INTTLookupElements, RCLookupElements, SubLookupElements},
+    big_air::relation::{IButterflyLookupElements, RCLookupElements, SubLookupElements},
     zq::{Q, sub::SubMod},
 };
 
@@ -212,7 +212,7 @@ pub struct Eval {
     /// Lookup elements for range checking
     pub rc_lookup_elements: RCLookupElements,
     /// Lookup elements for intt operations
-    pub intt_lookup_elements: INTTLookupElements,
+    pub ibutterfly_lookup_elements: IButterflyLookupElements,
     /// Lookup elements for subtraction operations
     pub sub_lookup_elements: SubLookupElements,
 }
@@ -242,7 +242,7 @@ impl FrameworkEval for Eval {
             &[remainder],
         ));
         eval.add_to_relation(RelationEntry::new(
-            &self.intt_lookup_elements,
+            &self.ibutterfly_lookup_elements,
             E::EF::one(),
             &[b],
         ));
@@ -279,7 +279,7 @@ impl InteractionClaim {
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
         rc_lookup_elements: &RCLookupElements,
-        intt_lookup_elements: &INTTLookupElements,
+        ibutterfly_lookup_elements: &IButterflyLookupElements,
         sub_lookup_elements: &SubLookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
@@ -325,7 +325,7 @@ impl InteractionClaim {
             let result_packed = trace[1].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = intt_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = ibutterfly_lookup_elements.combine(&[result_packed]);
 
             // The numerator is 1 (we want to check that remainder is in the range)
             let numerator = PackedQM31::one();

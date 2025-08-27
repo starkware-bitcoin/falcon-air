@@ -174,18 +174,17 @@ impl Claim {
             output_polys.push(merged_poly);
         }
 
-        for i in 0..1 << stage {
-            remainders.extend(trace[8 * i + 3].iter().map(|x| M31(*x)));
-            remainders.extend(trace[8 * i + 5].iter().map(|x| M31(*x)));
-            remainders.extend(trace[8 * i + 7].iter().map(|x| M31(*x)));
-        }
-
         // end of loop
         let trace = trace
             .into_iter()
             .map(|col| col.into_iter().map(M31).collect_vec())
             .collect_vec();
 
+        for i in 0..1 << stage {
+            remainders.extend(trace[8 * i + 3].clone());
+            remainders.extend(trace[8 * i + 5].clone());
+            remainders.extend(trace[8 * i + 7].clone());
+        }
         // Convert the trace values to circle evaluations for the proof system
         let domain = CanonicCoset::new(self.log_size).circle_domain();
         let mut is_filled = vec![M31(0); 1 << self.log_size];
