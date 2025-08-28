@@ -1,3 +1,18 @@
+//! # Big AIR Claims
+//!
+//! This module defines the claim structures for the Big AIR STARK proof system.
+//! It contains the main claim struct that combines all individual component claims
+//! and the trace structures used for proof generation.
+//!
+//! # Components
+//!
+//! - **BigClaim**: Main claim struct containing all component claims
+//! - **AllTraces**: Structure containing all trace data for proof generation
+//! - **Trace Generation**: Functions for generating traces from claims
+//!
+//! This module serves as the central coordination point for all proof components
+//! in the Falcon signature scheme implementation.
+
 use crate::{
     POLY_SIZE,
     ntts::{intt, ntt},

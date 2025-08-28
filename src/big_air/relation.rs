@@ -1,3 +1,18 @@
+//! # Big AIR Relations
+//!
+//! This module defines the lookup relation structures used in the Big AIR STARK proof system.
+//! It contains the various lookup elements needed for range checking, NTT operations,
+//! and arithmetic operations across all proof components.
+//!
+//! # Components
+//!
+//! - **Lookup Elements**: Various lookup element types for different operations
+//! - **Relation Types**: Enum types that combine related lookup elements
+//! - **Relation Implementation**: Standard relation trait implementations
+//!
+//! This module provides the foundation for all lookup-based verification in the
+//! Falcon signature scheme implementation.
+
 use stwo::core::channel::Channel;
 use stwo_constraint_framework::{Relation, RelationEFTraitBound, relation};
 

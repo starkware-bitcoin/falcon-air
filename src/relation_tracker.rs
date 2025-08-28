@@ -1,4 +1,17 @@
-// src/debug/relations.rs
+//! # Relation Tracker
+//!
+//! This module provides utilities for tracking and summarizing relation entries
+//! across all components in the Big AIR STARK proof system.
+//!
+//! # Features
+//!
+//! - **Relation Tracking**: Collects relation entries from all proof components
+//! - **Relation Summarization**: Provides cleaned summaries of relation usage
+//! - **Component Integration**: Integrates with all Big AIR components
+//! - **Debug Support**: Helps with verification and debugging of proof relations
+//!
+//! This module is used to ensure that all lookup relations are properly balanced
+//! and that the proof system maintains soundness across all components.
 use itertools::Itertools;
 use stwo::core::fields::m31::M31;
 use stwo::core::pcs::TreeVec;

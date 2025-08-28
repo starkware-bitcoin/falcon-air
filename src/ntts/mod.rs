@@ -24,8 +24,8 @@
 //!
 //! ## Modules
 //!
-//! - [`ntt`]: Forward NTT implementation (coefficient → evaluation form)
-//! - [`intt`]: Inverse NTT implementation (evaluation → coefficient form)  
+//! - [`ntt`]: Forward NTT implementation with butterfly and merge phases
+//! - [`intt`]: Inverse NTT implementation with split and butterfly phases  
 //! - [`roots`]: Precomputed roots of unity for all polynomial sizes
 //!
 //! ## Key Constants

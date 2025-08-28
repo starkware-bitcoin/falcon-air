@@ -1,4 +1,18 @@
-// Copy pasted from cairo m
+//! # Debug Utilities
+//!
+//! This module provides debugging utilities for the Falcon-AIR STARK proof system.
+//! It includes functions for constraint verification and trace validation to help
+//! with development and testing of the proof components.
+//!
+//! # Features
+//!
+//! - **Constraint Verification**: Validates that all arithmetic constraints are satisfied
+//! - **Trace Validation**: Ensures trace generation produces correct results
+//! - **Mock Commitment Scheme**: Provides a simplified commitment scheme for testing
+//! - **Debug Assertions**: Helper functions for development and debugging
+//!
+//! This module is primarily used during development and testing phases.
+
 #![allow(unused)]
 
 use std::ops::Deref;

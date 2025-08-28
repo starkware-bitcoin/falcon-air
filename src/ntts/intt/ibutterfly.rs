@@ -1,22 +1,23 @@
-//! Number Theoretic Transform (NTT) implementation for polynomial evaluation.
+//! Inverse Number Theoretic Transform (INTT) Butterfly implementation for polynomial interpolation.
 //!
-//! This module implements a complete NTT circuit that performs polynomial evaluation
-//! over a finite field using modular arithmetic operations. The NTT is a generalization
-//! of the Fast Fourier Transform (FFT) that works over finite fields.
+//! This module implements the final butterfly phase of the INTT circuit that performs
+//! polynomial interpolation over a finite field using modular arithmetic operations.
+//! The INTT is the inverse of the NTT and converts from evaluation form back to coefficient form.
 //!
-//! The NTT algorithm works by:
-//! 1. **Initial Butterfly Phase**: Performs the first level of NTT computation
-//! 2. **Recursive Merging Phase**: Combines intermediate results using roots of unity
-//! 3. **Final Evaluation**: Produces the polynomial in evaluation form
+//! The INTT butterfly algorithm works by:
+//! 1. **Final Butterfly Phase**: Performs the last level of INTT computation
+//! 2. **Scaling Operations**: Applies scaling factors and inverse roots of unity
+//! 3. **Coefficient Recovery**: Produces the polynomial in coefficient form
 //!
 //! Key characteristics:
-//! - Uses roots of unity for polynomial evaluation
-//! - Input is in coefficient form, output is in evaluation form
+//! - Uses inverse roots of unity for polynomial interpolation
+//! - Includes scaling factor I2 (1/2) for normalization
+//! - Input is in evaluation form, output is in coefficient form
 //! - Each arithmetic operation is decomposed for modular arithmetic verification
 //! - Includes range checking to ensure values remain within field bounds
 //!
-//! The NTT is the forward transform that converts from coefficient form to evaluation form,
-//! which is the inverse of the INTT (Inverse Number Theoretic Transform).
+//! The INTT is the inverse transform that converts from evaluation form to coefficient form,
+//! which is the inverse of the NTT (Number Theoretic Transform).
 
 use num_traits::One;
 use stwo::{
@@ -55,19 +56,17 @@ impl Claim {
         channel.mix_u64(self.log_size as u64);
     }
 
-    /// Generates the complete NTT computation trace.
+    /// Generates the INTT butterfly phase computation trace.
     ///
-    /// This function creates a trace that represents the entire NTT computation,
-    /// including the initial butterfly phase and the recursive merging phase. Each
-    /// arithmetic operation is decomposed into quotient and remainder parts for
-    /// modular arithmetic verification.
+    /// This function creates a trace that represents the final butterfly phase
+    /// of the INTT computation. Each arithmetic operation is decomposed into
+    /// quotient and remainder parts for modular arithmetic verification.
     ///
-    /// The NTT algorithm:
-    /// 1. Starts with polynomial in coefficient form [1, 2, ..., n]
-    /// 2. Applies bit-reversal permutation for in-place computation
-    /// 3. Performs initial butterfly operations using SQ1
-    /// 4. Recursively merges results using roots of unity
-    /// 5. Produces polynomial in evaluation form
+    /// The INTT butterfly algorithm:
+    /// 1. Takes intermediate results from split phase
+    /// 2. Applies scaling factor I2 and inverse roots of unity
+    /// 3. Performs final butterfly operations using SQ1 inverse
+    /// 4. Produces polynomial in coefficient form
     ///
     /// # Returns
     ///
@@ -252,9 +251,12 @@ impl FrameworkEval for Eval {
     /// 2. Evaluates recursive merging operations using roots of unity
     /// 3. Verifies all modular arithmetic operations through range checking
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
+        // Extract the two final coefficients from the trace for the butterfly operation
         let f_ntt_0 = eval.next_trace_mask();
         let f_ntt_1 = eval.next_trace_mask();
 
+        // Add input coefficients to INTT output lookup relation for verification
+        // This ensures the input values are properly connected to the INTT computation
         eval.add_to_relation(RelationEntry::new(
             &self.intt_output_lookup_elements,
             E::EF::one(),
@@ -266,6 +268,8 @@ impl FrameworkEval for Eval {
             &[f_ntt_1.clone()],
         ));
 
+        // Step 1: Add the two coefficients with modular arithmetic
+        // This computes f_ntt[0] + f_ntt[1] = quotient * Q + remainder
         let f_ntt_0_plus_f_ntt_1_quotient = eval.next_trace_mask();
         let f_ntt_0_plus_f_ntt_1_remainder = eval.next_trace_mask();
         AddMod::<E>::new(
@@ -276,7 +280,8 @@ impl FrameworkEval for Eval {
         )
         .evaluate(&self.rc_lookup_elements, &mut eval);
 
-        // (i2 * (f_ntt[0] + f_ntt[1])) % q
+        // Step 2: Apply scaling factor I2 to the sum with modular arithmetic
+        // This computes I2 * (f_ntt[0] + f_ntt[1]) = quotient * Q + remainder
         let i2_times_f_ntt_0_plus_f_ntt_1_quotient = eval.next_trace_mask();
         let i2_times_f_ntt_0_plus_f_ntt_1_remainder = eval.next_trace_mask();
         MulMod::<E>::new(
@@ -287,7 +292,8 @@ impl FrameworkEval for Eval {
         )
         .evaluate(&self.rc_lookup_elements, &mut eval);
 
-        // f_ntt[0] - f_ntt[1]
+        // Step 3: Subtract the two coefficients with modular arithmetic
+        // This computes f_ntt[0] - f_ntt[1] = quotient * Q + remainder (with borrow)
         let f_ntt_0_minus_f_ntt_1_quotient = eval.next_trace_mask();
         let f_ntt_0_minus_f_ntt_1_remainder = eval.next_trace_mask();
         SubMod::<E>::new(
@@ -298,9 +304,12 @@ impl FrameworkEval for Eval {
         )
         .evaluate(&self.rc_lookup_elements, &mut eval);
 
+        // Step 4: Apply scaling factor I2 and inverse of SQ1 to the difference
+        // Precompute I2 * inv(SQ1) for efficiency
         let i2_times_inv_sq1 = (I2 * INVERSES_MOD_Q[SQ1 as usize]) % Q;
 
-        // (i2 * inv_mod_q[sqr1] * (f_ntt[0] - f_ntt[1])) % q
+        // Step 4: Multiply by I2 * inv(SQ1) with modular arithmetic
+        // This computes I2 * inv(SQ1) * (f_ntt[0] - f_ntt[1]) = quotient * Q + remainder
         let i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_quotient = eval.next_trace_mask();
         let i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder = eval.next_trace_mask();
         MulMod::<E>::new(
@@ -310,6 +319,9 @@ impl FrameworkEval for Eval {
             i2_times_inv_mod_q_sqr1_times_f_ntt_0_minus_f_ntt_1_remainder.clone(),
         )
         .evaluate(&self.rc_lookup_elements, &mut eval);
+
+        // Add butterfly output values to lookup relation for verification
+        // These relations ensure the butterfly outputs are properly connected to the INTT computation
         eval.add_to_relation(RelationEntry::new(
             &self.ibutterfly_output_lookup_elements,
             -E::EF::one(),

@@ -1,22 +1,22 @@
-//! Number Theoretic Transform (NTT) implementation for polynomial evaluation.
+//! NTT Butterfly Phase implementation for polynomial evaluation.
 //!
-//! This module implements a complete NTT circuit that performs polynomial evaluation
-//! over a finite field using modular arithmetic operations. The NTT is a generalization
-//! of the Fast Fourier Transform (FFT) that works over finite fields.
+//! This module implements the initial butterfly phase of the NTT circuit that performs
+//! polynomial evaluation over a finite field using modular arithmetic operations.
+//! The butterfly phase is the first step in the NTT algorithm.
 //!
-//! The NTT algorithm works by:
-//! 1. **Initial Butterfly Phase**: Performs the first level of NTT computation
-//! 2. **Recursive Merging Phase**: Combines intermediate results using roots of unity
-//! 3. **Final Evaluation**: Produces the polynomial in evaluation form
+//! The butterfly phase works by:
+//! 1. **Bit Reversal**: Applies bit-reversal permutation for in-place computation
+//! 2. **Initial Butterfly**: Performs butterfly operations using SQ1 (square root of 1)
+//! 3. **Coefficient Processing**: Processes pairs of coefficients using butterfly pattern
 //!
 //! Key characteristics:
-//! - Uses roots of unity for polynomial evaluation
-//! - Input is in coefficient form, output is in evaluation form
+//! - Uses SQ1 (square root of 1) for the first level butterfly operations
+//! - Input is in coefficient form, output is ready for recursive merging
 //! - Each arithmetic operation is decomposed for modular arithmetic verification
 //! - Includes range checking to ensure values remain within field bounds
 //!
-//! The NTT is the forward transform that converts from coefficient form to evaluation form,
-//! which is the inverse of the INTT (Inverse Number Theoretic Transform).
+//! This is the first phase of the NTT that converts from coefficient form to
+//! intermediate form ready for recursive merging.
 
 use num_traits::One;
 use stwo::{
@@ -55,19 +55,17 @@ impl Claim {
         channel.mix_u64(self.log_size as u64);
     }
 
-    /// Generates the complete NTT computation trace.
+    /// Generates the NTT butterfly phase computation trace.
     ///
-    /// This function creates a trace that represents the entire NTT computation,
-    /// including the initial butterfly phase and the recursive merging phase. Each
-    /// arithmetic operation is decomposed into quotient and remainder parts for
-    /// modular arithmetic verification.
+    /// This function creates a trace that represents the initial butterfly phase
+    /// of the NTT computation. Each arithmetic operation is decomposed into
+    /// quotient and remainder parts for modular arithmetic verification.
     ///
-    /// The NTT algorithm:
-    /// 1. Starts with polynomial in coefficient form [1, 2, ..., n]
+    /// The butterfly phase algorithm:
+    /// 1. Starts with polynomial in coefficient form
     /// 2. Applies bit-reversal permutation for in-place computation
-    /// 3. Performs initial butterfly operations using SQ1
-    /// 4. Recursively merges results using roots of unity
-    /// 5. Produces polynomial in evaluation form
+    /// 3. Performs butterfly operations using SQ1 (square root of 1)
+    /// 4. Produces intermediate results ready for recursive merging
     ///
     /// # Returns
     ///
@@ -230,22 +228,31 @@ impl FrameworkEval for Eval {
     /// 2. Evaluates recursive merging operations using roots of unity
     /// 3. Verifies all modular arithmetic operations through range checking
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
+        // Get the square root of 1 (SQ1) as a field element for butterfly operations
         let sq1 = E::F::from(M31::from_u32_unchecked(SQ1));
 
         // Phase 1: Evaluate initial butterfly operations
-        // This corresponds to the first phase of trace generation
+        // This corresponds to the first phase of trace generation where we process
+        // pairs of coefficients using the butterfly pattern with SQ1
 
+        // Extract trace columns for the butterfly operation:
+        // f0, f1: Input coefficients from the polynomial
         let f0 = eval.next_trace_mask();
         let f1 = eval.next_trace_mask();
+        // f1_times_sq1_quotient, f1_times_sq1_remainder: Multiplication decomposition
         let f1_times_sq1_quotient = eval.next_trace_mask();
         let f1_times_sq1_remainder = eval.next_trace_mask();
 
+        // f0_plus_f1_times_sq1_quotient, f0_plus_f1_times_sq1_remainder: Addition decomposition
         let f0_plus_f1_times_sq1_quotient = eval.next_trace_mask();
         let f0_plus_f1_times_sq1_remainder = eval.next_trace_mask();
 
+        // f0_minus_f1_times_sq1_quotient, f0_minus_f1_times_sq1_remainder: Subtraction decomposition
         let f0_minus_f1_times_sq1_quotient = eval.next_trace_mask();
         let f0_minus_f1_times_sq1_remainder = eval.next_trace_mask();
 
+        // Step 1: Evaluate multiplication f1 * SQ1 with modular arithmetic decomposition
+        // This computes f1 * SQ1 = quotient * Q + remainder and verifies the decomposition
         MulMod::new(
             f1,
             sq1.clone(),
@@ -253,6 +260,9 @@ impl FrameworkEval for Eval {
             f1_times_sq1_remainder.clone(),
         )
         .evaluate(&self.rc_lookup_elements, &mut eval);
+
+        // Step 2: Evaluate addition f0 + (f1 * SQ1) with modular arithmetic decomposition
+        // This computes f0 + remainder = quotient * Q + remainder and verifies the decomposition
         AddMod::new(
             f0.clone(),
             f1_times_sq1_remainder.clone(),
@@ -260,6 +270,9 @@ impl FrameworkEval for Eval {
             f0_plus_f1_times_sq1_remainder.clone(),
         )
         .evaluate(&self.rc_lookup_elements, &mut eval);
+
+        // Step 3: Evaluate subtraction f0 - (f1 * SQ1) with modular arithmetic decomposition
+        // This computes f0 - remainder = quotient * Q + remainder (with borrow handling)
         SubMod::new(
             f0,
             f1_times_sq1_remainder,
@@ -268,6 +281,8 @@ impl FrameworkEval for Eval {
         )
         .evaluate(&self.rc_lookup_elements, &mut eval);
 
+        // Add butterfly output values to lookup relation for verification
+        // These relations ensure the butterfly outputs are properly connected to the NTT computation
         eval.add_to_relation(RelationEntry::new(
             &self.butterfly_output_lookup_elements,
             -E::EF::one(),

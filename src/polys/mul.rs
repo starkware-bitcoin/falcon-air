@@ -315,7 +315,7 @@ impl InteractionClaim {
     ) {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
-        // Range check
+        // Range check for remainder values
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             // Get the remainder value from the trace (column 3)
@@ -331,38 +331,40 @@ impl InteractionClaim {
         }
         col_gen.finalize_col();
 
-        // f_ntt
+        // F-NTT lookup for operand a
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            // Get the remainder value from the trace (column 3)
+            // Get the operand a value from the trace (column 0)
             let result_packed = trace[0].data[vec_row];
 
             // Create the denominator using the lookup elements
             let denom: PackedQM31 = f_ntt_lookup_elements.combine(&[result_packed]);
 
-            // The numerator is 1 (we want to check that remainder is in the range)
+            // The numerator is 1 (we're consuming the value created by the NTT)
             let numerator = PackedQM31::one();
 
             col_gen.write_frac(vec_row, numerator, denom);
         }
         col_gen.finalize_col();
-        // g_ntt
+
+        // G-NTT lookup for operand b
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            // Get the remainder value from the trace (column 3)
+            // Get the operand b value from the trace (column 1)
             let result_packed = trace[1].data[vec_row];
 
             // Create the denominator using the lookup elements
             let denom: PackedQM31 = g_ntt_lookup_elements.combine(&[result_packed]);
 
-            // The numerator is 1 (we want to check that remainder is in the range)
+            // The numerator is 1 (we're consuming the value created by the NTT)
+
             let numerator = PackedQM31::one();
 
             col_gen.write_frac(vec_row, numerator, denom);
         }
         col_gen.finalize_col();
 
-        // mul output
+        // Multiplication lookup for remainder
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             // Get the remainder value from the trace (column 3)
@@ -371,7 +373,7 @@ impl InteractionClaim {
             // Create the denominator using the lookup elements
             let denom: PackedQM31 = mul_lookup_elements.combine(&[result_packed]);
 
-            // The numerator is 1 (we want to check that remainder is in the range)
+            // The numerator is -1 (we're producing a value)
             let numerator = -PackedQM31::one();
 
             col_gen.write_frac(vec_row, numerator, denom);

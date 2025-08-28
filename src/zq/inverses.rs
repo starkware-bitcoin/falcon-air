@@ -1,3 +1,9 @@
+//! # Modular Inverses
+//!
+//! This module contains precomputed modular inverses for the field Z_q where q = 12289.
+//! The array `INVERSES_MOD_Q` contains the multiplicative inverse of each element in [0, q),
+//! where INVERSES_MOD_Q[i] = i^(-1) mod q for i > 0, and INVERSES_MOD_Q[0] = 0.
+
 pub const INVERSES_MOD_Q: &[u32] = &[
     0, 1, 6145, 8193, 9217, 2458, 10241, 8778, 10753, 2731, 1229, 5586, 11265, 2836, 4389, 9012,
     11521, 6506, 7510, 3234, 6759, 2926, 2793, 6946, 11777, 7865, 1418, 9103, 8339, 10594, 4506,

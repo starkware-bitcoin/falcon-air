@@ -1,3 +1,18 @@
+//! # Big AIR Interaction Claims
+//!
+//! This module defines the interaction claim structures for the Big AIR STARK proof system.
+//! It contains the main interaction claim struct that combines all individual component
+//! interaction claims and provides utilities for managing lookup relations.
+//!
+//! # Components
+//!
+//! - **BigInteractionClaim**: Main interaction claim struct containing all component claims
+//! - **Interaction Management**: Functions for mixing claims and computing total sums
+//! - **Lookup Relations**: Ensures all lookup relations are properly balanced
+//!
+//! This module coordinates the interaction claims across all proof components
+//! to ensure the overall proof system maintains soundness.
+
 use crate::{
     HIGH_SIG_BOUND, LOW_SIG_BOUND,
     big_air::relation::{INTTInputLookupElements, LookupElements},

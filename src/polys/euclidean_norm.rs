@@ -347,9 +347,9 @@ impl InteractionClaim {
         channel.mix_felts(&[self.claimed_sum]);
     }
 
-    /// Generates the interaction trace for modular multiplication.
+    /// Generates the interaction trace for Euclidean norm computation.
     ///
-    /// This method creates the interaction trace that connects the multiplication component
+    /// This method creates the interaction trace that connects the Euclidean norm component
     /// with the range check component through the lookup protocol.
     ///
     /// # Parameters

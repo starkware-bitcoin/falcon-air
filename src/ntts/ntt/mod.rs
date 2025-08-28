@@ -1,22 +1,22 @@
-//! Number Theoretic Transform (NTT) implementation for polynomial evaluation.
+//! NTT Merge Phase implementation for polynomial evaluation.
 //!
-//! This module implements a complete NTT circuit that performs polynomial evaluation
-//! over a finite field using modular arithmetic operations. The NTT is a generalization
-//! of the Fast Fourier Transform (FFT) that works over finite fields.
+//! This module implements the recursive merging phase of the NTT circuit that performs
+//! polynomial evaluation over a finite field using modular arithmetic operations.
+//! The merge phase combines results from smaller subproblems into larger polynomial evaluations.
 //!
-//! The NTT algorithm works by:
-//! 1. **Initial Butterfly Phase**: Performs the first level of NTT computation
-//! 2. **Recursive Merging Phase**: Combines intermediate results using roots of unity
-//! 3. **Final Evaluation**: Produces the polynomial in evaluation form
+//! The merge phase works by:
+//! 1. **Recursive Merging**: Combines intermediate results using roots of unity
+//! 2. **Butterfly Operations**: Applies butterfly pattern to merge coefficients
+//! 3. **Polynomial Growth**: Doubles polynomial size at each level
 //!
 //! Key characteristics:
 //! - Uses roots of unity for polynomial evaluation
-//! - Input is in coefficient form, output is in evaluation form
+//! - Input is intermediate form from butterfly phase, output is evaluation form
 //! - Each arithmetic operation is decomposed for modular arithmetic verification
 //! - Includes range checking to ensure values remain within field bounds
 //!
-//! The NTT is the forward transform that converts from coefficient form to evaluation form,
-//! which is the inverse of the INTT (Inverse Number Theoretic Transform).
+//! This is the recursive merging phase of the NTT that combines smaller polynomials
+//! into the final evaluation form.
 
 use itertools::Itertools;
 
@@ -79,19 +79,17 @@ impl Claim {
         channel.mix_u64(self.log_size as u64);
     }
 
-    /// Generates the complete NTT computation trace.
+    /// Generates the NTT merge phase computation trace.
     ///
-    /// This function creates a trace that represents the entire NTT computation,
-    /// including the initial butterfly phase and the recursive merging phase. Each
-    /// arithmetic operation is decomposed into quotient and remainder parts for
-    /// modular arithmetic verification.
+    /// This function creates a trace that represents the recursive merging phase
+    /// of the NTT computation. Each arithmetic operation is decomposed into
+    /// quotient and remainder parts for modular arithmetic verification.
     ///
-    /// The NTT algorithm:
-    /// 1. Starts with polynomial in coefficient form [1, 2, ..., n]
-    /// 2. Applies bit-reversal permutation for in-place computation
-    /// 3. Performs initial butterfly operations using SQ1
-    /// 4. Recursively merges results using roots of unity
-    /// 5. Produces polynomial in evaluation form
+    /// The merge phase algorithm:
+    /// 1. Takes intermediate results from butterfly phase
+    /// 2. Combines pairs of polynomials using roots of unity
+    /// 3. Applies butterfly pattern to merge coefficients
+    /// 4. Produces larger polynomials ready for next merge level
     ///
     /// # Returns
     ///
@@ -293,15 +291,22 @@ impl FrameworkEval for Eval {
     /// 2. Evaluates recursive merging operations using roots of unity
     /// 3. Verifies all modular arithmetic operations through range checking
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
+        // Extract the filled mask that indicates which positions contain valid data
         let is_filled = eval.next_trace_mask();
+        // Initialize collection of merge operations for this NTT level
         let mut merges = MergeNTT::default();
 
         // Process each coefficient pair using the appropriate root of unity
+        // Each level uses different roots from the precomputed ROOTS array
         for j in 0..self.poly_size {
+            // Get the j-th root of unity for this polynomial size level
             let root = ROOTS[self.poly_size.ilog2() as usize][2 * j];
+            // Extract the left coefficient from the trace
             let coeff_left = eval.next_trace_mask();
             let coeff_right = eval.next_trace_mask();
 
+            // Add input coefficients to lookup relation for verification
+            // This ensures the input values are properly connected to the NTT computation
             eval.add_to_relation(RelationEntry::new(
                 &self.input_lookup_elements,
                 E::EF::from(is_filled.clone()),
@@ -314,35 +319,44 @@ impl FrameworkEval for Eval {
                 &[coeff_right.clone()],
             ));
 
-            // Step 1: Multiply f1_ntt coefficient by root of unity
+            // Step 1: Multiply f1_ntt coefficient by root of unity with modular arithmetic
+            // This computes f1_ntt[i] * root[i] = quotient * Q + remainder
             let root_times_f1 = MulMod::<E>::new(
                 coeff_right.clone(),
                 E::F::from(M31(root)),
                 eval.next_trace_mask(),
                 eval.next_trace_mask(),
             );
-            // Step 2: Add f0_ntt coefficient to the multiplied result
+
+            // Step 2: Add f0_ntt coefficient to the multiplied result with modular arithmetic
+            // This computes f0_ntt[i] + (f1_ntt[i] * root[i]) = quotient * Q + remainder
             let f0_plus_root_times_f1 = AddMod::<E>::new(
                 coeff_left.clone(),
                 root_times_f1.r.clone(),
                 eval.next_trace_mask(),
                 eval.next_trace_mask(),
             );
-            // Step 3: Subtract the multiplied result from f0_ntt coefficient
+
+            // Step 3: Subtract the multiplied result from f0_ntt coefficient with modular arithmetic
+            // This computes f0_ntt[i] - (f1_ntt[i] * root[i]) = quotient * Q + remainder (with borrow)
             let f0_minus_root_times_f1 = SubMod::<E>::new(
                 coeff_left.clone(),
                 root_times_f1.r.clone(),
                 eval.next_trace_mask(),
                 eval.next_trace_mask(),
             );
-            // Create a merge operation combining all three steps
+            // Create a merge operation combining all three arithmetic steps
+            // This represents one complete butterfly operation for this coefficient pair
             let merge = Merge::new(root_times_f1, f0_plus_root_times_f1, f0_minus_root_times_f1);
             merges.push(merge);
         }
 
-        // Evaluate the merge operations and store the result
+        // Evaluate all merge operations and collect the merged polynomial coefficients
+        // This performs the actual butterfly operations and produces the merged results
         let merged_poly = MergeNTT::evaluate(merges, &self.rc_lookup_elements, &mut eval);
 
+        // Add merged polynomial coefficients to NTT lookup relation for verification
+        // This ensures the output values are properly connected to the NTT computation
         merged_poly.into_iter().for_each(|x| {
             eval.add_to_relation(RelationEntry::new(
                 &self.ntt_lookup_elements,

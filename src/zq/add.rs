@@ -31,12 +31,10 @@ impl<E: stwo_constraint_framework::EvalAtRow> AddMod<E> {
     }
 
     pub fn evaluate(self, lookup_elements: &RCLookupElements, eval: &mut E) {
-        // Extract trace values
+        // Enforce modular arithmetic constraint: a + b = q * Q + r
         eval.add_constraint(self.a + self.b - self.q * E::F::from(M31(Q)) - self.r.clone());
-        // Now we need to check that the remainder is in the range [0, Q)
-        // We do this by using the range check we defined. Here we increment the multiplicity of
-        // this value (remainder) by 1 because we want to range check it and the logup sum has to be exactly 0
-        // So here we increment and in the range_check we decrements
+
+        // Add remainder to range check lookup (increment multiplicity for range checking)
         eval.add_to_relation(RelationEntry::new(lookup_elements, E::EF::one(), &[self.r]));
     }
 }

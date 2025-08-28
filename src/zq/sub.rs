@@ -1,13 +1,13 @@
-//! # Modular Addition Component
+//! # Modular Subtraction Component
 //!
-//! This module implements STARK proof components for modular addition operations.
+//! This module implements STARK proof components for modular subtraction operations.
 //!
-//! The modular addition operation computes (a + b) mod q, where q = 12289.
+//! The modular subtraction operation computes (a - b) mod q, where q = 12289.
 //! The operation is decomposed into:
-//! - a + b = quotient * q + remainder
-//! - where remainder ∈ [0, q)
+//! - a - b = borrow * q + remainder
+//! - where remainder ∈ [0, q) and borrow ∈ {0, 1}
 //!
-//! The component generates traces for the operands (a, b), quotient, and remainder,
+//! The component generates traces for the operands (a, b), borrow, and remainder,
 //! and enforces the constraint that the remainder is within the valid range.
 
 use num_traits::One;
