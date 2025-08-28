@@ -78,13 +78,6 @@ use crate::{
 ///
 /// - `log_size`: The log base 2 of the trace size (e.g., 10 for 1024 operations)
 ///   This determines the number of multiplication operations and the size of the computation trace.
-///
-/// # Example
-///
-/// For a trace with 1024 multiplication operations on polynomial evaluations:
-/// ```rust
-/// let claim = Claim { log_size: 10 };
-/// ```
 #[derive(Debug, Clone)]
 pub struct Claim {
     /// The log base 2 of the trace size

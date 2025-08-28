@@ -78,13 +78,6 @@ use crate::{
 ///
 /// - `log_size`: The log base 2 of the trace size (e.g., 10 for 1024 coefficients)
 ///   This determines the number of polynomial coefficients and the size of the computation trace.
-///
-/// # Example
-///
-/// For a polynomial with 1024 coefficients:
-/// ```rust
-/// let claim = Claim { log_size: 10 };
-/// ```
 #[derive(Debug, Clone)]
 pub struct Claim {
     /// The log base 2 of the trace size

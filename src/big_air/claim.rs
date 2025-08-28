@@ -14,10 +14,10 @@
 //! in the Falcon signature scheme implementation.
 
 use crate::{
-    POLY_SIZE,
+    HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_SIZE,
     ntts::{intt, ntt},
     polys::{euclidean_norm, mul, sub},
-    zq::range_check,
+    zq::{Q, range_check},
 };
 use itertools::{Itertools, chain};
 use stwo::{
@@ -124,6 +124,79 @@ impl AllTraces {
 }
 
 impl BigClaim {
+    /// Creates a standard BigClaim with all the default component claims.
+    ///
+    /// This function centralizes the creation of the BigClaim structure to avoid
+    /// duplication between debug and main modules.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `BigClaim` with all the standard component claims configured.
+    pub fn new_standard() -> Self {
+        use crate::{HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_LOG_SIZE};
+        use stwo::prover::backend::simd::m31::LOG_N_LANES;
+
+        let range_check_log_size = crate::zq::Q.ilog2() + 1;
+
+        let f_ntt_merges = (1..POLY_LOG_SIZE)
+            .map(|log_size| {
+                let log_size = POLY_LOG_SIZE - log_size - 1;
+                ntt::Claim {
+                    log_size: std::cmp::max(LOG_N_LANES, log_size),
+                }
+            })
+            .collect_vec();
+        let g_ntt_merges = (1..POLY_LOG_SIZE)
+            .map(|log_size| {
+                let log_size = POLY_LOG_SIZE - log_size - 1;
+                ntt::Claim {
+                    log_size: std::cmp::max(LOG_N_LANES, log_size),
+                }
+            })
+            .collect_vec();
+        let intt_merges = (1..POLY_LOG_SIZE)
+            .map(|log_size| intt::Claim {
+                log_size: std::cmp::max(LOG_N_LANES, log_size),
+            })
+            .collect_vec();
+
+        Self {
+            f_ntt_butterfly: ntt::butterfly::Claim {
+                log_size: POLY_LOG_SIZE - 1,
+            },
+            f_ntt_merges,
+            g_ntt_butterfly: ntt::butterfly::Claim {
+                log_size: POLY_LOG_SIZE - 1,
+            },
+            g_ntt_merges,
+            mul: mul::Claim {
+                log_size: POLY_LOG_SIZE,
+            },
+            intt_merges,
+            ibutterfly: intt::ibutterfly::Claim {
+                log_size: POLY_LOG_SIZE - 1,
+            },
+            sub: sub::Claim {
+                log_size: POLY_LOG_SIZE,
+            },
+            euclidean_norm: euclidean_norm::Claim {
+                log_size: POLY_LOG_SIZE,
+            },
+            half_range_check: range_check::Claim {
+                log_size: range_check_log_size - 1,
+            },
+            low_sig_bound_check: range_check::Claim {
+                log_size: LOW_SIG_BOUND.next_power_of_two().ilog2(),
+            },
+            high_sig_bound_check: range_check::Claim {
+                log_size: HIGH_SIG_BOUND.next_power_of_two().ilog2(),
+            },
+            range_check: range_check::Claim {
+                log_size: range_check_log_size,
+            },
+        }
+    }
+
     /// Mixes all claim parameters into the Fiat-Shamir channel.
     ///
     /// This ensures that the proof is deterministic and all components
@@ -286,6 +359,305 @@ impl BigClaim {
                 high_sig_bound_check_trace,
                 range_check_trace,
             ),
+        )
+    }
+
+    /// Creates the standard preprocessed columns for range checking.
+    ///
+    /// This function creates and returns the standard preprocessed columns used
+    /// for range checking across the Big AIR system.
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple containing all the preprocessed range check columns.
+    pub fn create_preprocessed_columns() -> (
+        stwo::prover::poly::circle::CircleEvaluation<
+            stwo::prover::backend::simd::SimdBackend,
+            stwo::core::fields::m31::M31,
+            stwo::prover::poly::BitReversedOrder,
+        >,
+        stwo::prover::poly::circle::CircleEvaluation<
+            stwo::prover::backend::simd::SimdBackend,
+            stwo::core::fields::m31::M31,
+            stwo::prover::poly::BitReversedOrder,
+        >,
+        stwo::prover::poly::circle::CircleEvaluation<
+            stwo::prover::backend::simd::SimdBackend,
+            stwo::core::fields::m31::M31,
+            stwo::prover::poly::BitReversedOrder,
+        >,
+        stwo::prover::poly::circle::CircleEvaluation<
+            stwo::prover::backend::simd::SimdBackend,
+            stwo::core::fields::m31::M31,
+            stwo::prover::poly::BitReversedOrder,
+        >,
+    ) {
+        let range_check_preprocessed = range_check::RangeCheck::<Q>::gen_column_simd();
+        let half_range_check_preprocessed = range_check::RangeCheck::<{ Q / 2 }>::gen_column_simd();
+        let low_sig_bound_check_preprocessed =
+            range_check::RangeCheck::<LOW_SIG_BOUND>::gen_column_simd();
+        let high_sig_bound_check_preprocessed =
+            range_check::RangeCheck::<HIGH_SIG_BOUND>::gen_column_simd();
+
+        (
+            range_check_preprocessed,
+            half_range_check_preprocessed,
+            low_sig_bound_check_preprocessed,
+            high_sig_bound_check_preprocessed,
+        )
+    }
+
+    /// Creates all NTT components (butterfly and merge components for both f and g).
+    ///
+    /// # Arguments
+    ///
+    /// * `claim` - The BigClaim containing all component claims
+    /// * `lookup_elements` - The lookup elements for all operations
+    /// * `interaction_claim` - The interaction claim containing claimed sums
+    /// * `tree_span_provider` - The trace location allocator
+    ///
+    /// # Returns
+    ///
+    /// Returns tuples containing the butterfly and merge components for both f and g NTTs.
+    pub fn create_ntt_components(
+        claim: &BigClaim,
+        lookup_elements: &crate::big_air::relation::LookupElements,
+        interaction_claim: &crate::big_air::interaction_claim::BigInteractionClaim,
+        tree_span_provider: &mut stwo_constraint_framework::TraceLocationAllocator,
+    ) -> (
+        ntt::butterfly::Component,
+        Vec<ntt::Component>,
+        ntt::butterfly::Component,
+        Vec<ntt::Component>,
+    ) {
+        let f_ntt_butterfly_component = ntt::butterfly::Component::new(
+            tree_span_provider,
+            ntt::butterfly::Eval {
+                claim: claim.f_ntt_butterfly.clone(),
+                rc_lookup_elements: lookup_elements.rc.clone(),
+                butterfly_output_lookup_elements: lookup_elements.f_ntt_butterfly.clone(),
+            },
+            interaction_claim.f_ntt_butterfly.claimed_sum,
+        );
+
+        let f_ntt_merges_components = claim
+            .f_ntt_merges
+            .iter()
+            .zip_eq(interaction_claim.f_ntt_merges.iter())
+            .enumerate()
+            .map(|(i, (merge, interaction_claim))| {
+                ntt::Component::new(
+                    tree_span_provider,
+                    ntt::Eval {
+                        claim: merge.clone(),
+                        rc_lookup_elements: lookup_elements.rc.clone(),
+                        ntt_lookup_elements: lookup_elements.f_ntt.clone(),
+                        input_lookup_elements: if i == 0 {
+                            ntt::InputLookupElements::Butterfly(
+                                lookup_elements.f_ntt_butterfly.clone(),
+                            )
+                        } else {
+                            ntt::InputLookupElements::NTT(lookup_elements.f_ntt.clone())
+                        },
+                        poly_size: 1 << (i + 1),
+                    },
+                    interaction_claim.claimed_sum,
+                )
+            })
+            .collect_vec();
+
+        let g_ntt_butterfly_component = ntt::butterfly::Component::new(
+            tree_span_provider,
+            ntt::butterfly::Eval {
+                claim: claim.g_ntt_butterfly.clone(),
+                rc_lookup_elements: lookup_elements.rc.clone(),
+                butterfly_output_lookup_elements: lookup_elements.g_ntt_butterfly.clone(),
+            },
+            interaction_claim.g_ntt_butterfly.claimed_sum,
+        );
+
+        let g_ntt_merges_components = claim
+            .g_ntt_merges
+            .iter()
+            .zip_eq(interaction_claim.g_ntt_merges.iter())
+            .enumerate()
+            .map(|(i, (merge, interaction_claim))| {
+                ntt::Component::new(
+                    tree_span_provider,
+                    ntt::Eval {
+                        claim: merge.clone(),
+                        rc_lookup_elements: lookup_elements.rc.clone(),
+                        ntt_lookup_elements: lookup_elements.g_ntt.clone(),
+                        input_lookup_elements: if i == 0 {
+                            ntt::InputLookupElements::Butterfly(
+                                lookup_elements.g_ntt_butterfly.clone(),
+                            )
+                        } else {
+                            ntt::InputLookupElements::NTT(lookup_elements.g_ntt.clone())
+                        },
+                        poly_size: 1 << (i + 1),
+                    },
+                    interaction_claim.claimed_sum,
+                )
+            })
+            .collect_vec();
+
+        (
+            f_ntt_butterfly_component,
+            f_ntt_merges_components,
+            g_ntt_butterfly_component,
+            g_ntt_merges_components,
+        )
+    }
+
+    /// Creates all the remaining components (mul, intt, ibutterfly, sub, euclidean_norm, range_checks).
+    ///
+    /// # Arguments
+    ///
+    /// * `claim` - The BigClaim containing all component claims
+    /// * `lookup_elements` - The lookup elements for all operations
+    /// * `interaction_claim` - The interaction claim containing claimed sums
+    /// * `tree_span_provider` - The trace location allocator
+    ///
+    /// # Returns
+    ///
+    /// Returns all the remaining components as individual variables.
+    pub fn create_remaining_components(
+        claim: &BigClaim,
+        lookup_elements: &crate::big_air::relation::LookupElements,
+        interaction_claim: &crate::big_air::interaction_claim::BigInteractionClaim,
+        tree_span_provider: &mut stwo_constraint_framework::TraceLocationAllocator,
+    ) -> (
+        mul::Component,
+        Vec<intt::Component>,
+        intt::ibutterfly::Component,
+        sub::Component,
+        euclidean_norm::Component,
+        range_check::Component<{ Q / 2 }>,
+        range_check::Component<LOW_SIG_BOUND>,
+        range_check::Component<HIGH_SIG_BOUND>,
+        range_check::Component<Q>,
+    ) {
+        let mul_component = mul::Component::new(
+            tree_span_provider,
+            mul::Eval {
+                claim: claim.mul.clone(),
+                rc_lookup_elements: lookup_elements.rc.clone(),
+                f_ntt_lookup_elements: lookup_elements.f_ntt.clone(),
+                g_ntt_lookup_elements: lookup_elements.g_ntt.clone(),
+                mul_lookup_elements: lookup_elements.mul.clone(),
+            },
+            interaction_claim.mul.claimed_sum,
+        );
+
+        let intt_merges_components = claim
+            .intt_merges
+            .iter()
+            .zip_eq(interaction_claim.intt_merges.iter())
+            .enumerate()
+            .map(|(i, (merge, interaction_claim))| {
+                intt::Component::new(
+                    tree_span_provider,
+                    intt::Eval {
+                        claim: merge.clone(),
+                        rc_lookup_elements: lookup_elements.rc.clone(),
+                        input_lookup_elements: if i == 0 {
+                            crate::big_air::relation::INTTInputLookupElements::Mul(
+                                lookup_elements.mul.clone(),
+                            )
+                        } else {
+                            crate::big_air::relation::INTTInputLookupElements::INTTOutput(
+                                lookup_elements.intt.clone(),
+                            )
+                        },
+                        intt_lookup_elements: lookup_elements.intt.clone(),
+                        poly_size: 1 << (crate::POLY_LOG_SIZE as usize - i),
+                    },
+                    interaction_claim.claimed_sum,
+                )
+            })
+            .collect_vec();
+
+        let ibutterfly_component = intt::ibutterfly::Component::new(
+            tree_span_provider,
+            intt::ibutterfly::Eval {
+                claim: claim.ibutterfly.clone(),
+                rc_lookup_elements: lookup_elements.rc.clone(),
+                intt_output_lookup_elements: lookup_elements.intt.clone(),
+                ibutterfly_output_lookup_elements: lookup_elements.ibutterfly.clone(),
+            },
+            interaction_claim.ibutterfly.claimed_sum,
+        );
+
+        let sub_component = sub::Component::new(
+            tree_span_provider,
+            sub::Eval {
+                claim: claim.sub.clone(),
+                rc_lookup_elements: lookup_elements.rc.clone(),
+                ibutterfly_lookup_elements: lookup_elements.ibutterfly.clone(),
+                sub_lookup_elements: lookup_elements.sub.clone(),
+            },
+            interaction_claim.sub.claimed_sum,
+        );
+
+        let euclidean_norm_component = euclidean_norm::Component::new(
+            tree_span_provider,
+            euclidean_norm::Eval {
+                claim: claim.euclidean_norm.clone(),
+                half_rc_lookup_elements: lookup_elements.half_range_check.clone(),
+                s0_lookup_elements: lookup_elements.sub.clone(),
+                low_sig_bound_check_lookup_elements: lookup_elements.low_sig_bound_check.clone(),
+                high_sig_bound_check_lookup_elements: lookup_elements.high_sig_bound_check.clone(),
+            },
+            interaction_claim.euclidean_norm.claimed_sum,
+        );
+
+        let half_range_check_component = range_check::Component::new(
+            tree_span_provider,
+            range_check::Eval::<{ Q / 2 }> {
+                claim: claim.half_range_check.clone(),
+                lookup_elements: lookup_elements.half_range_check.clone(),
+            },
+            interaction_claim.half_range_check.claimed_sum,
+        );
+
+        let low_sig_bound_check_component = range_check::Component::new(
+            tree_span_provider,
+            range_check::Eval::<LOW_SIG_BOUND> {
+                claim: claim.low_sig_bound_check.clone(),
+                lookup_elements: lookup_elements.low_sig_bound_check.clone(),
+            },
+            interaction_claim.low_sig_bound_check.claimed_sum,
+        );
+
+        let high_sig_bound_check_component = range_check::Component::new(
+            tree_span_provider,
+            range_check::Eval::<HIGH_SIG_BOUND> {
+                claim: claim.high_sig_bound_check.clone(),
+                lookup_elements: lookup_elements.high_sig_bound_check.clone(),
+            },
+            interaction_claim.high_sig_bound_check.claimed_sum,
+        );
+
+        let range_check_component = range_check::Component::new(
+            tree_span_provider,
+            range_check::Eval::<Q> {
+                claim: claim.range_check.clone(),
+                lookup_elements: lookup_elements.rc.clone(),
+            },
+            interaction_claim.range_check.claimed_sum,
+        );
+
+        (
+            mul_component,
+            intt_merges_components,
+            ibutterfly_component,
+            sub_component,
+            euclidean_norm_component,
+            half_range_check_component,
+            low_sig_bound_check_component,
+            high_sig_bound_check_component,
+            range_check_component,
         )
     }
 }

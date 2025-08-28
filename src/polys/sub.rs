@@ -72,13 +72,6 @@ use crate::{
 ///
 /// Contains the logarithmic size of the trace, which determines the number of
 /// subtraction operations that can be proven.
-///
-/// # Example
-///
-/// For a trace with 1024 subtraction operations:
-/// ```rust
-/// let claim = Claim { log_size: 10 };
-/// ```
 #[derive(Debug, Clone)]
 pub struct Claim {
     /// The log base 2 of the trace size (determines number of operations: 2^log_size)
