@@ -14,8 +14,8 @@
 //! in the Falcon signature scheme implementation.
 
 use crate::{
-    HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_SIZE,
-    ntts::{intt, ntt},
+    HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_LOG_SIZE, POLY_SIZE,
+    ntts::{intt, ntt, roots},
     polys::{euclidean_norm, mul, sub},
     zq::{Q, range_check},
 };
@@ -27,6 +27,7 @@ use stwo::{
         poly::{BitReversedOrder, circle::CircleEvaluation},
     },
 };
+use stwo_constraint_framework::preprocessed_columns::PreProcessedColumnId;
 
 #[derive(Debug, Clone)]
 pub struct BigClaim {
@@ -56,6 +57,8 @@ pub struct BigClaim {
     pub high_sig_bound_check: range_check::Claim,
     /// Claim for range checking operations
     pub range_check: range_check::Claim,
+    /// Claim for roots operations
+    pub roots: Vec<roots::preprocessed::Claim>,
 }
 
 #[derive(Debug, Clone)]
@@ -86,6 +89,8 @@ pub struct AllTraces {
     pub high_sig_bound_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     /// Trace column from range checking: multiplicities
     pub range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+    /// Trace columns from roots operations
+    pub roots: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
 }
 
 impl AllTraces {
@@ -104,6 +109,7 @@ impl AllTraces {
         low_sig_bound_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
         high_sig_bound_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
         range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     ) -> Self {
         Self {
             f_ntt_butterfly,
@@ -119,6 +125,7 @@ impl AllTraces {
             low_sig_bound_check,
             high_sig_bound_check,
             range_check,
+            roots,
         }
     }
 }
@@ -139,19 +146,13 @@ impl BigClaim {
         let range_check_log_size = crate::zq::Q.ilog2() + 1;
 
         let f_ntt_merges = (1..POLY_LOG_SIZE)
-            .map(|log_size| {
-                let log_size = POLY_LOG_SIZE - log_size - 1;
-                ntt::Claim {
-                    log_size: std::cmp::max(LOG_N_LANES, log_size),
-                }
+            .map(|_| ntt::Claim {
+                log_size: POLY_LOG_SIZE - 1,
             })
             .collect_vec();
         let g_ntt_merges = (1..POLY_LOG_SIZE)
-            .map(|log_size| {
-                let log_size = POLY_LOG_SIZE - log_size - 1;
-                ntt::Claim {
-                    log_size: std::cmp::max(LOG_N_LANES, log_size),
-                }
+            .map(|_| ntt::Claim {
+                log_size: POLY_LOG_SIZE - 1,
             })
             .collect_vec();
         let intt_merges = (1..POLY_LOG_SIZE)
@@ -159,7 +160,12 @@ impl BigClaim {
                 log_size: std::cmp::max(LOG_N_LANES, log_size),
             })
             .collect_vec();
-
+        // TODO: add the last roots when butterfly is using this preprocessed column as well
+        let roots = (1..POLY_LOG_SIZE)
+            .map(|i| roots::preprocessed::Claim {
+                log_size: std::cmp::max(LOG_N_LANES, i),
+            })
+            .collect_vec();
         Self {
             f_ntt_butterfly: ntt::butterfly::Claim {
                 log_size: POLY_LOG_SIZE - 1,
@@ -194,6 +200,7 @@ impl BigClaim {
             range_check: range_check::Claim {
                 log_size: range_check_log_size,
             },
+            roots,
         }
     }
 
@@ -253,12 +260,14 @@ impl BigClaim {
 
         let mut f_ntt_outputs = vec![f_ntt_butterfly_output];
         let mut f_ntt_traces = vec![];
+        let mut f_ntt_js = vec![];
         for (i, merge) in self.f_ntt_merges.iter().enumerate() {
-            let (f_ntt_trace, f_ntt_remainders, f_ntt_output) =
+            let (f_ntt_trace, f_ntt_remainders, f_ntt_output, js) =
                 merge.gen_trace(&f_ntt_outputs[i], i + 1);
             range_check_input.extend(f_ntt_remainders);
             f_ntt_outputs.push(f_ntt_output);
             f_ntt_traces.push(f_ntt_trace);
+            f_ntt_js.push(js);
         }
 
         let (g_ntt_butterfly_trace, g_ntt_butterfly_remainders, g_ntt_butterfly_output) =
@@ -267,12 +276,14 @@ impl BigClaim {
 
         let mut g_ntt_outputs = vec![g_ntt_butterfly_output];
         let mut g_ntt_traces = vec![];
+        let mut g_ntt_js = vec![];
         for (i, merge) in self.g_ntt_merges.iter().enumerate() {
-            let (g_ntt_trace, g_ntt_remainders, g_ntt_output) =
+            let (g_ntt_trace, g_ntt_remainders, g_ntt_output, js) =
                 merge.gen_trace(&g_ntt_outputs[i], i + 1);
             range_check_input.extend(g_ntt_remainders);
             g_ntt_outputs.push(g_ntt_output);
             g_ntt_traces.push(g_ntt_trace);
+            g_ntt_js.push(js);
         }
 
         let (mul_trace, mul_remainders) = self.mul.gen_trace(
@@ -327,6 +338,20 @@ impl BigClaim {
             .gen_trace(&[vec![M31(euclidean_norm_output_high)]]);
         let range_check_trace = self.range_check.gen_trace(&range_check_input);
 
+        let mut roots = vec![];
+
+        for ((roots_claim, f_ntt_js), g_ntt_js) in
+            self.roots.iter().zip_eq(f_ntt_js).zip_eq(g_ntt_js)
+        {
+            let roots_trace = roots_claim.gen_trace(
+                &f_ntt_js
+                    .into_iter()
+                    .chain(g_ntt_js.into_iter())
+                    .collect_vec(),
+            );
+            roots.push(roots_trace);
+        }
+
         (
             chain!(
                 f_ntt_butterfly_trace.clone(),
@@ -341,7 +366,8 @@ impl BigClaim {
                 [half_range_check_trace.clone()],
                 [low_sig_bound_check_trace.clone()],
                 [high_sig_bound_check_trace.clone()],
-                [range_check_trace.clone()]
+                [range_check_trace.clone()],
+                roots.clone(),
             )
             .collect_vec(),
             AllTraces::new(
@@ -358,6 +384,7 @@ impl BigClaim {
                 low_sig_bound_check_trace,
                 high_sig_bound_check_trace,
                 range_check_trace,
+                roots,
             ),
         )
     }
@@ -371,40 +398,40 @@ impl BigClaim {
     ///
     /// Returns a tuple containing all the preprocessed range check columns.
     pub fn create_preprocessed_columns() -> (
-        stwo::prover::poly::circle::CircleEvaluation<
-            stwo::prover::backend::simd::SimdBackend,
-            stwo::core::fields::m31::M31,
-            stwo::prover::poly::BitReversedOrder,
-        >,
-        stwo::prover::poly::circle::CircleEvaluation<
-            stwo::prover::backend::simd::SimdBackend,
-            stwo::core::fields::m31::M31,
-            stwo::prover::poly::BitReversedOrder,
-        >,
-        stwo::prover::poly::circle::CircleEvaluation<
-            stwo::prover::backend::simd::SimdBackend,
-            stwo::core::fields::m31::M31,
-            stwo::prover::poly::BitReversedOrder,
-        >,
-        stwo::prover::poly::circle::CircleEvaluation<
-            stwo::prover::backend::simd::SimdBackend,
-            stwo::core::fields::m31::M31,
-            stwo::prover::poly::BitReversedOrder,
-        >,
+        Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+        Vec<PreProcessedColumnId>,
     ) {
+        let mut columns = vec![];
+        let mut ids = vec![];
+
         let range_check_preprocessed = range_check::RangeCheck::<Q>::gen_column_simd();
+        columns.push(range_check_preprocessed);
+        ids.push(range_check::RangeCheck::<Q>::id());
+
         let half_range_check_preprocessed = range_check::RangeCheck::<{ Q / 2 }>::gen_column_simd();
+        columns.push(half_range_check_preprocessed);
+        ids.push(range_check::RangeCheck::<{ Q / 2 }>::id());
+
         let low_sig_bound_check_preprocessed =
             range_check::RangeCheck::<LOW_SIG_BOUND>::gen_column_simd();
+        columns.push(low_sig_bound_check_preprocessed);
+        ids.push(range_check::RangeCheck::<LOW_SIG_BOUND>::id());
+
         let high_sig_bound_check_preprocessed =
             range_check::RangeCheck::<HIGH_SIG_BOUND>::gen_column_simd();
+        columns.push(high_sig_bound_check_preprocessed);
+        ids.push(range_check::RangeCheck::<HIGH_SIG_BOUND>::id());
 
-        (
-            range_check_preprocessed,
-            half_range_check_preprocessed,
-            low_sig_bound_check_preprocessed,
-            high_sig_bound_check_preprocessed,
-        )
+        // TODO; add the last roots when butterfly is using this preprocessed column as well
+        for i in 1..POLY_LOG_SIZE {
+            let roots_preprocessed = roots::preprocessed::Roots::new(i as usize).gen_column_simd();
+            columns.extend(roots_preprocessed);
+            ids.push(roots::preprocessed::Roots::new(i as usize).id());
+            let mut root_id = roots::preprocessed::Roots::new(i as usize).id();
+            root_id.id.push_str("_root");
+            ids.push(root_id);
+        }
+        (columns, ids)
     }
 
     /// Creates all NTT components (butterfly and merge components for both f and g).
@@ -460,6 +487,7 @@ impl BigClaim {
                             ntt::InputLookupElements::NTT(lookup_elements.f_ntt.clone())
                         },
                         poly_size: 1 << (i + 1),
+                        roots_lookup_elements: lookup_elements.roots.clone(),
                     },
                     interaction_claim.claimed_sum,
                 )
@@ -496,6 +524,7 @@ impl BigClaim {
                             ntt::InputLookupElements::NTT(lookup_elements.g_ntt.clone())
                         },
                         poly_size: 1 << (i + 1),
+                        roots_lookup_elements: lookup_elements.roots.clone(),
                     },
                     interaction_claim.claimed_sum,
                 )
@@ -537,6 +566,7 @@ impl BigClaim {
         range_check::Component<LOW_SIG_BOUND>,
         range_check::Component<HIGH_SIG_BOUND>,
         range_check::Component<Q>,
+        Vec<roots::preprocessed::Component>,
     ) {
         let mul_component = mul::Component::new(
             tree_span_provider,
@@ -647,6 +677,23 @@ impl BigClaim {
             },
             interaction_claim.range_check.claimed_sum,
         );
+        let roots_components = claim
+            .roots
+            .iter()
+            .zip_eq(interaction_claim.roots.iter())
+            .enumerate()
+            .map(|(i, (roots_claim, interaction_claim))| {
+                roots::preprocessed::Component::new(
+                    tree_span_provider,
+                    roots::preprocessed::Eval {
+                        claim: roots_claim.clone(),
+                        lookup_elements: lookup_elements.roots.clone(),
+                        poly_log_size: i + 1,
+                    },
+                    interaction_claim.claimed_sum,
+                )
+            })
+            .collect_vec();
 
         (
             mul_component,
@@ -658,6 +705,7 @@ impl BigClaim {
             low_sig_bound_check_component,
             high_sig_bound_check_component,
             range_check_component,
+            roots_components,
         )
     }
 }

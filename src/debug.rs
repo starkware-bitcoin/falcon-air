@@ -40,7 +40,7 @@ use crate::big_air::relation::INTTInputLookupElements;
 use crate::big_air::{
     claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements,
 };
-use crate::ntts::{intt, ntt};
+use crate::ntts::{intt, ntt, roots};
 use crate::polys::sub;
 use crate::polys::{euclidean_norm, mul};
 use crate::zq::range_check::RangeCheck;
@@ -56,20 +56,11 @@ pub fn assert_constraints(
     let range_check_log_size = Q.ilog2() + 1;
 
     // Preprocessed trace.
-    let (
-        range_check_preprocessed,
-        half_range_check_preprocessed,
-        low_sig_bound_check_preprocessed,
-        high_sig_bound_check_preprocessed,
-    ) = crate::big_air::claim::BigClaim::create_preprocessed_columns();
+    let (preprocessed_columns, preprocessed_columns_ids) =
+        crate::big_air::claim::BigClaim::create_preprocessed_columns();
 
     let mut tree_builder = commitment_scheme.tree_builder();
-    tree_builder.extend_evals([
-        range_check_preprocessed,
-        half_range_check_preprocessed,
-        low_sig_bound_check_preprocessed,
-        high_sig_bound_check_preprocessed,
-    ]);
+    tree_builder.extend_evals(preprocessed_columns);
     tree_builder.finalize_interaction();
 
     // Generate and commit to main traces
@@ -99,16 +90,13 @@ pub fn assert_constraints(
         &traces.low_sig_bound_check,
         &traces.high_sig_bound_check,
         &traces.range_check,
+        &traces.roots,
     );
     tree_builder.extend_evals(interaction_trace);
     tree_builder.finalize_interaction();
 
-    let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
-        RangeCheck::<Q>::id(),
-        RangeCheck::<{ Q / 2 }>::id(),
-        RangeCheck::<LOW_SIG_BOUND>::id(),
-        RangeCheck::<HIGH_SIG_BOUND>::id(),
-    ]);
+    let mut tree_span_provider =
+        TraceLocationAllocator::new_with_preproccessed_columns(&preprocessed_columns_ids);
 
     let (
         f_ntt_butterfly_component,
@@ -131,6 +119,7 @@ pub fn assert_constraints(
         low_sig_bound_check_component,
         high_sig_bound_check_component,
         range_check_component,
+        roots_components,
     ) = BigClaim::create_remaining_components(
         &claim,
         &lookup_elements,
@@ -152,6 +141,7 @@ pub fn assert_constraints(
         &low_sig_bound_check_component,
         &high_sig_bound_check_component,
         &range_check_component,
+        roots_components.as_slice(),
     );
 
     assert_components(commitment_scheme.trace_domain_evaluations(), components);
@@ -261,6 +251,7 @@ fn assert_components(
         &FrameworkComponent<range_check::Eval<LOW_SIG_BOUND>>,
         &FrameworkComponent<range_check::Eval<HIGH_SIG_BOUND>>,
         &FrameworkComponent<range_check::Eval<Q>>,
+        &[FrameworkComponent<roots::preprocessed::Eval>],
     ),
 ) {
     let (
@@ -277,6 +268,7 @@ fn assert_components(
         low_sig_bound_check,
         high_sig_bound_check,
         range_check,
+        roots,
     ) = components;
     println!("f_ntt_butterfly");
     assert_component(f_ntt_butterfly, &trace);
@@ -313,6 +305,11 @@ fn assert_components(
     assert_component(high_sig_bound_check, &trace);
     println!("range_check");
     assert_component(range_check, &trace);
+    println!("roots");
+    for (i, root) in roots.iter().enumerate() {
+        println!("root {}", i);
+        assert_component(root, &trace);
+    }
 }
 
 fn assert_component<E: FrameworkEval + Sync>(

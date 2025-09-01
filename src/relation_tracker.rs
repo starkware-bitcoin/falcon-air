@@ -44,6 +44,7 @@ pub struct BigAirComponents<'a> {
     pub low_sig_bound_check: &'a FrameworkComponent<crate::zq::range_check::Eval<LOW_SIG_BOUND>>,
     pub high_sig_bound_check: &'a FrameworkComponent<crate::zq::range_check::Eval<HIGH_SIG_BOUND>>,
     pub range_check: &'a FrameworkComponent<crate::zq::range_check::Eval<Q>>,
+    pub roots: &'a [FrameworkComponent<crate::ntts::roots::preprocessed::Eval>],
 }
 
 /// Evaluate the committed trace back on the circle domain, collect relation entries from all
@@ -108,5 +109,9 @@ fn big_air_relation_entries(
         trace,
     ));
     entries.extend(add_to_relation_entries(components.range_check, trace));
+    for root in components.roots.iter() {
+        entries.extend(add_to_relation_entries(root, trace));
+    }
+
     entries
 }

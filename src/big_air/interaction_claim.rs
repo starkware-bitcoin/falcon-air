@@ -16,7 +16,7 @@
 use crate::{
     HIGH_SIG_BOUND, LOW_SIG_BOUND,
     big_air::relation::{INTTInputLookupElements, LookupElements},
-    ntts::{intt, ntt},
+    ntts::{intt, ntt, roots},
     polys::{euclidean_norm, mul, sub},
     zq::{Q, range_check},
 };
@@ -60,6 +60,8 @@ pub struct BigInteractionClaim {
     pub high_sig_bound_check: range_check::InteractionClaim,
     /// Interaction claim for range checking
     pub range_check: range_check::InteractionClaim,
+    /// Interaction claim for roots
+    pub roots: Vec<roots::preprocessed::InteractionClaim>,
 }
 
 impl BigInteractionClaim {
@@ -146,6 +148,7 @@ impl BigInteractionClaim {
         low_sig_bound_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
         high_sig_bound_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
         range_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
+        roots_traces: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
     ) -> (
         Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Self,
@@ -169,7 +172,7 @@ impl BigInteractionClaim {
                     } else {
                         ntt::InputLookupElements::NTT(lookup_elements.f_ntt.clone())
                     },
-                    i + 1,
+                    &lookup_elements.roots,
                 );
             f_ntt_interaction_traces.push(f_ntt_interaction_trace);
             f_ntt_interaction_claims.push(f_ntt_interaction_claim);
@@ -194,7 +197,7 @@ impl BigInteractionClaim {
                     } else {
                         ntt::InputLookupElements::NTT(lookup_elements.g_ntt.clone())
                     },
-                    i + 1,
+                    &lookup_elements.roots,
                 );
             g_ntt_interaction_traces.push(g_ntt_interaction_trace);
             g_ntt_interaction_claims.push(g_ntt_interaction_claim);
@@ -267,6 +270,18 @@ impl BigInteractionClaim {
                 range_check_trace,
                 &lookup_elements.rc,
             );
+        let mut roots_interaction_traces = vec![];
+        let mut roots_interaction_claims = vec![];
+        for (stage, stage_root_trace) in roots_traces.iter().enumerate() {
+            let (roots_interaction_trace, roots_interaction_claim) =
+                roots::preprocessed::InteractionClaim::gen_interaction_trace(
+                    stage_root_trace,
+                    &lookup_elements.roots,
+                    stage + 1,
+                );
+            roots_interaction_traces.push(roots_interaction_trace);
+            roots_interaction_claims.push(roots_interaction_claim);
+        }
         (
             chain!(
                 f_ntt_butterfly_interaction_trace,
@@ -294,6 +309,11 @@ impl BigInteractionClaim {
                 low_sig_bound_check_interaction_trace,
                 high_sig_bound_check_interaction_trace,
                 range_check_interaction_trace,
+                roots_interaction_traces
+                    .iter()
+                    .flatten()
+                    .cloned()
+                    .collect_vec(),
             )
             .collect_vec(),
             Self {
@@ -310,6 +330,7 @@ impl BigInteractionClaim {
                 low_sig_bound_check: low_sig_bound_check_interaction_claim,
                 high_sig_bound_check: high_sig_bound_check_interaction_claim,
                 range_check: range_check_interaction_claim,
+                roots: roots_interaction_claims,
             },
         )
     }

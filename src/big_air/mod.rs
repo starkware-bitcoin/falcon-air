@@ -17,9 +17,9 @@ pub mod interaction_claim;
 pub mod relation;
 
 use crate::{
-    HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_SIZE,
+    POLY_SIZE,
     big_air::{claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements},
-    zq::{Q, range_check},
+    zq::Q,
 };
 
 use num_traits::Zero;
@@ -83,18 +83,9 @@ pub fn prove_falcon(
     let mut commitment_scheme =
         CommitmentSchemeProver::<SimdBackend, Blake2sMerkleChannel>::new(pcs_config, &twiddles);
     let mut tree_builder = commitment_scheme.tree_builder();
-    let (
-        range_check_preprocessed,
-        half_range_check_preprocessed,
-        low_sig_bound_check_preprocessed,
-        high_sig_bound_check_preprocessed,
-    ) = BigClaim::create_preprocessed_columns();
-    tree_builder.extend_evals([
-        range_check_preprocessed,
-        half_range_check_preprocessed,
-        low_sig_bound_check_preprocessed,
-        high_sig_bound_check_preprocessed,
-    ]);
+    let (preprocessed_columns, preprocessed_columns_ids) = BigClaim::create_preprocessed_columns();
+
+    tree_builder.extend_evals(preprocessed_columns);
     tree_builder.commit(channel);
 
     // Generate and commit to main traces
@@ -128,6 +119,7 @@ pub fn prove_falcon(
         &traces.low_sig_bound_check,
         &traces.high_sig_bound_check,
         &traces.range_check,
+        &traces.roots,
     );
 
     interaction_claim.mix_into(channel);
@@ -137,12 +129,8 @@ pub fn prove_falcon(
     tree_builder.commit(channel);
 
     // Set up trace location allocator with preprocessed columns
-    let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
-        range_check::RangeCheck::<Q>::id(),
-        range_check::RangeCheck::<{ Q / 2 }>::id(),
-        range_check::RangeCheck::<LOW_SIG_BOUND>::id(),
-        range_check::RangeCheck::<HIGH_SIG_BOUND>::id(),
-    ]);
+    let mut tree_span_provider =
+        TraceLocationAllocator::new_with_preproccessed_columns(&preprocessed_columns_ids);
 
     let (
         f_ntt_butterfly_component,
@@ -165,6 +153,7 @@ pub fn prove_falcon(
         low_sig_bound_check_component,
         high_sig_bound_check_component,
         range_check_component,
+        roots_components,
     ) = BigClaim::create_remaining_components(
         &claim,
         &lookup_elements,
@@ -190,6 +179,7 @@ pub fn prove_falcon(
             low_sig_bound_check: &low_sig_bound_check_component,
             high_sig_bound_check: &high_sig_bound_check_component,
             range_check: &range_check_component,
+            roots: &roots_components,
         };
         let summary = track_and_summarize_big_air_relations(&commitment_scheme, components);
         // std::fs::write("summary.txt", format!("{:?}", summary)).unwrap();
@@ -222,6 +212,11 @@ pub fn prove_falcon(
     components.push(&low_sig_bound_check_component);
     components.push(&high_sig_bound_check_component);
     components.push(&range_check_component);
+
+    for root in roots_components.iter() {
+        components.push(root);
+    }
+
     // Generate the final STARK proof
     prove::<SimdBackend, _>(&components, channel, commitment_scheme)
     // Err(ProvingError::ConstraintsNotSatisfied)

@@ -408,11 +408,6 @@ impl InteractionClaim {
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
     ) {
-        println!("poly_size gen_interaction_trace: {:?}", stage);
-        println!(
-            "interaction input lookup elements: {:?}",
-            intt_input_lookup_elements
-        );
         let log_size = trace[0].domain.log_size();
         let is_first = trace[0].clone();
         let trace = trace.iter().skip(1).collect::<Vec<_>>();
