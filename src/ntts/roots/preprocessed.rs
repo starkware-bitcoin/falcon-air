@@ -60,6 +60,7 @@ impl Roots {
         &self,
     ) -> Vec<CircleEvaluation<SimdBackend, BaseField, BitReversedOrder>> {
         let mut js = (0..(1 << self.poly_log_size)).collect_vec();
+
         let mut roots = ROOTS[self.poly_log_size - 1].to_vec();
         if self.poly_log_size < LOG_N_LANES as usize {
             js.resize(1 << (LOG_N_LANES as usize), 0);
@@ -185,7 +186,6 @@ impl InteractionClaim {
         Self,
     ) {
         let log_size = trace.domain.log_size();
-        println!("log_size = {:?}", log_size);
         let mut logup_gen = LogupTraceGenerator::new(log_size);
         let mut col_gen = logup_gen.new_col();
         let js_and_roots = Roots::new(poly_log_size).gen_column_simd();

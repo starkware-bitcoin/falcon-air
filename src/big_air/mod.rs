@@ -182,9 +182,9 @@ pub fn prove_falcon(
             roots: &roots_components,
         };
         let summary = track_and_summarize_big_air_relations(&commitment_scheme, components);
-        // std::fs::write("summary.txt", format!("{:?}", summary)).unwrap();
+        std::fs::write("summary.txt", format!("{:?}", summary)).unwrap();
 
-        println!("summary: {:?}", summary);
+        // println!("summary: {:?}", summary);
     }
     assert_eq!(
         interaction_claim.claimed_sum(),

@@ -118,6 +118,7 @@ impl BigInteractionClaim {
             + self.low_sig_bound_check.claimed_sum
             + self.high_sig_bound_check.claimed_sum
             + self.range_check.claimed_sum
+            + self.roots.iter().map(|root| root.claimed_sum).sum::<QM31>()
     }
 
     /// Generates interaction traces for all components.
@@ -277,7 +278,7 @@ impl BigInteractionClaim {
                 roots::preprocessed::InteractionClaim::gen_interaction_trace(
                     stage_root_trace,
                     &lookup_elements.roots,
-                    stage + 1,
+                    stage + 2,
                 );
             roots_interaction_traces.push(roots_interaction_trace);
             roots_interaction_claims.push(roots_interaction_claim);

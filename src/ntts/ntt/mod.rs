@@ -140,7 +140,8 @@ impl Claim {
             for (j, (coeff_left, coeff_right)) in left.iter().zip(right.iter()).enumerate() {
                 // Get the appropriate root of unity for this position
                 // Each level uses different roots from the precomputed ROOTS array
-                let root = ROOTS[stage][2 * j];
+                let j = 2 * j;
+                let root = ROOTS[stage][j];
                 js.push(j as u32);
                 trace[0][row] = 1;
                 row += 1;

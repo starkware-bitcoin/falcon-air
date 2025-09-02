@@ -161,7 +161,7 @@ impl BigClaim {
             })
             .collect_vec();
         // TODO: add the last roots when butterfly is using this preprocessed column as well
-        let roots = (1..POLY_LOG_SIZE)
+        let roots = (2..=POLY_LOG_SIZE)
             .map(|i| roots::preprocessed::Claim {
                 log_size: std::cmp::max(LOG_N_LANES, i),
             })
@@ -423,7 +423,7 @@ impl BigClaim {
         ids.push(range_check::RangeCheck::<HIGH_SIG_BOUND>::id());
 
         // TODO; add the last roots when butterfly is using this preprocessed column as well
-        for i in 1..POLY_LOG_SIZE {
+        for i in 2..=POLY_LOG_SIZE {
             let roots_preprocessed = roots::preprocessed::Roots::new(i as usize).gen_column_simd();
             columns.extend(roots_preprocessed);
             ids.push(roots::preprocessed::Roots::new(i as usize).id());
@@ -688,7 +688,7 @@ impl BigClaim {
                     roots::preprocessed::Eval {
                         claim: roots_claim.clone(),
                         lookup_elements: lookup_elements.roots.clone(),
-                        poly_log_size: i + 1,
+                        poly_log_size: i + 2,
                     },
                     interaction_claim.claimed_sum,
                 )
