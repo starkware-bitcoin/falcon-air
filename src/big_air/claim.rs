@@ -59,6 +59,8 @@ pub struct BigClaim {
     pub range_check: range_check::Claim,
     /// Claim for roots operations
     pub roots: Vec<roots::preprocessed::Claim>,
+    /// Claim for inverse roots operations
+    pub inv_roots: Vec<roots::inv_preprocessed::Claim>,
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +93,7 @@ pub struct AllTraces {
     pub range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
     /// Trace columns from roots operations
     pub roots: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+    pub inv_roots: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
 }
 
 impl AllTraces {
@@ -110,6 +113,7 @@ impl AllTraces {
         high_sig_bound_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
         range_check: CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
         roots: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
+        inv_roots: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
     ) -> Self {
         Self {
             f_ntt_butterfly,
@@ -126,6 +130,7 @@ impl AllTraces {
             high_sig_bound_check,
             range_check,
             roots,
+            inv_roots,
         }
     }
 }
@@ -156,13 +161,19 @@ impl BigClaim {
             })
             .collect_vec();
         let intt_merges = (1..POLY_LOG_SIZE)
-            .map(|log_size| intt::Claim {
-                log_size: std::cmp::max(LOG_N_LANES, log_size),
+            .map(|_| intt::Claim {
+                log_size: POLY_LOG_SIZE - 1,
             })
             .collect_vec();
         // TODO: add the last roots when butterfly is using this preprocessed column as well
         let roots = (2..=POLY_LOG_SIZE)
             .map(|i| roots::preprocessed::Claim {
+                log_size: std::cmp::max(LOG_N_LANES, i),
+            })
+            .collect_vec();
+        let inv_roots = (2..=POLY_LOG_SIZE)
+            .rev()
+            .map(|i| roots::inv_preprocessed::Claim {
                 log_size: std::cmp::max(LOG_N_LANES, i),
             })
             .collect_vec();
@@ -201,6 +212,7 @@ impl BigClaim {
                 log_size: range_check_log_size,
             },
             roots,
+            inv_roots,
         }
     }
 
@@ -294,13 +306,14 @@ impl BigClaim {
 
         let mut intt_outputs = vec![vec![mul_remainders.into_iter().map(|r| r.0).collect_vec()]];
         let mut intt_traces = vec![];
+        let mut intt_js = vec![];
 
         for (i, split) in self.intt_merges.iter().enumerate() {
-            let (intt_trace, intt_remainders, intt_output) =
-                split.gen_trace(&intt_outputs[i], i + 1);
+            let (intt_trace, intt_remainders, intt_output, js) = split.gen_trace(&intt_outputs[i]);
             range_check_input.extend(intt_remainders);
             intt_outputs.push(intt_output);
             intt_traces.push(intt_trace);
+            intt_js.push(js);
         }
 
         let ibutterfly_input = intt_outputs.last().unwrap().clone();
@@ -351,6 +364,12 @@ impl BigClaim {
             );
             roots.push(roots_trace);
         }
+        let mut inv_roots = vec![];
+
+        for (inv_roots_claim, intt_js) in self.inv_roots.iter().zip_eq(intt_js) {
+            let roots_trace = inv_roots_claim.gen_trace(&intt_js);
+            inv_roots.push(roots_trace);
+        }
 
         (
             chain!(
@@ -368,6 +387,7 @@ impl BigClaim {
                 [high_sig_bound_check_trace.clone()],
                 [range_check_trace.clone()],
                 roots.clone(),
+                inv_roots.clone(),
             )
             .collect_vec(),
             AllTraces::new(
@@ -385,6 +405,7 @@ impl BigClaim {
                 high_sig_bound_check_trace,
                 range_check_trace,
                 roots,
+                inv_roots,
             ),
         )
     }
@@ -430,6 +451,15 @@ impl BigClaim {
             let mut root_id = roots::preprocessed::Roots::new(i as usize).id();
             root_id.id.push_str("_root");
             ids.push(root_id);
+        }
+        for i in (2..=POLY_LOG_SIZE).rev() {
+            let inv_roots_preprocessed =
+                roots::inv_preprocessed::InvRoots::new(i as usize).gen_column_simd();
+            columns.extend(inv_roots_preprocessed);
+            ids.push(roots::inv_preprocessed::InvRoots::new(i as usize).id());
+            let mut inv_root_id = roots::inv_preprocessed::InvRoots::new(i as usize).id();
+            inv_root_id.id.push_str("_inv_root");
+            ids.push(inv_root_id);
         }
         (columns, ids)
     }
@@ -567,6 +597,7 @@ impl BigClaim {
         range_check::Component<HIGH_SIG_BOUND>,
         range_check::Component<Q>,
         Vec<roots::preprocessed::Component>,
+        Vec<roots::inv_preprocessed::Component>,
     ) {
         let mul_component = mul::Component::new(
             tree_span_provider,
@@ -602,6 +633,7 @@ impl BigClaim {
                         },
                         intt_lookup_elements: lookup_elements.intt.clone(),
                         poly_size: 1 << (crate::POLY_LOG_SIZE as usize - i),
+                        inv_roots_lookup_elements: lookup_elements.inv_roots.clone(),
                     },
                     interaction_claim.claimed_sum,
                 )
@@ -694,6 +726,23 @@ impl BigClaim {
                 )
             })
             .collect_vec();
+        let inv_roots_components = claim
+            .inv_roots
+            .iter()
+            .zip_eq(interaction_claim.inv_roots.iter())
+            .enumerate()
+            .map(|(i, (inv_roots_claim, interaction_claim))| {
+                roots::inv_preprocessed::Component::new(
+                    tree_span_provider,
+                    roots::inv_preprocessed::Eval {
+                        claim: inv_roots_claim.clone(),
+                        lookup_elements: lookup_elements.inv_roots.clone(),
+                        poly_log_size: POLY_LOG_SIZE as usize - i,
+                    },
+                    interaction_claim.claimed_sum,
+                )
+            })
+            .collect_vec();
 
         (
             mul_component,
@@ -706,6 +755,7 @@ impl BigClaim {
             high_sig_bound_check_component,
             range_check_component,
             roots_components,
+            inv_roots_components,
         )
     }
 }

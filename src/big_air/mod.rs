@@ -120,6 +120,7 @@ pub fn prove_falcon(
         &traces.high_sig_bound_check,
         &traces.range_check,
         &traces.roots,
+        &traces.inv_roots,
     );
 
     interaction_claim.mix_into(channel);
@@ -154,6 +155,7 @@ pub fn prove_falcon(
         high_sig_bound_check_component,
         range_check_component,
         roots_components,
+        inv_roots_components,
     ) = BigClaim::create_remaining_components(
         &claim,
         &lookup_elements,
@@ -180,6 +182,7 @@ pub fn prove_falcon(
             high_sig_bound_check: &high_sig_bound_check_component,
             range_check: &range_check_component,
             roots: &roots_components,
+            inv_roots: &inv_roots_components,
         };
         let summary = track_and_summarize_big_air_relations(&commitment_scheme, components);
         std::fs::write("summary.txt", format!("{:?}", summary)).unwrap();
@@ -215,6 +218,9 @@ pub fn prove_falcon(
 
     for root in roots_components.iter() {
         components.push(root);
+    }
+    for inv_root in inv_roots_components.iter() {
+        components.push(inv_root);
     }
 
     // Generate the final STARK proof

@@ -91,6 +91,7 @@ pub fn assert_constraints(
         &traces.high_sig_bound_check,
         &traces.range_check,
         &traces.roots,
+        &traces.inv_roots,
     );
     tree_builder.extend_evals(interaction_trace);
     tree_builder.finalize_interaction();
@@ -120,6 +121,7 @@ pub fn assert_constraints(
         high_sig_bound_check_component,
         range_check_component,
         roots_components,
+        inv_roots_components,
     ) = BigClaim::create_remaining_components(
         &claim,
         &lookup_elements,
@@ -142,6 +144,7 @@ pub fn assert_constraints(
         &high_sig_bound_check_component,
         &range_check_component,
         roots_components.as_slice(),
+        inv_roots_components.as_slice(),
     );
 
     assert_components(commitment_scheme.trace_domain_evaluations(), components);
@@ -252,6 +255,7 @@ fn assert_components(
         &FrameworkComponent<range_check::Eval<HIGH_SIG_BOUND>>,
         &FrameworkComponent<range_check::Eval<Q>>,
         &[FrameworkComponent<roots::preprocessed::Eval>],
+        &[FrameworkComponent<roots::inv_preprocessed::Eval>],
     ),
 ) {
     let (
@@ -269,6 +273,7 @@ fn assert_components(
         high_sig_bound_check,
         range_check,
         roots,
+        inv_roots,
     ) = components;
     println!("f_ntt_butterfly");
     assert_component(f_ntt_butterfly, &trace);
@@ -309,6 +314,11 @@ fn assert_components(
     for (i, root) in roots.iter().enumerate() {
         println!("root {}", i);
         assert_component(root, &trace);
+    }
+    println!("inv_roots");
+    for (i, inv_root) in inv_roots.iter().enumerate() {
+        println!("inv_root {}", i);
+        assert_component(inv_root, &trace);
     }
 }
 

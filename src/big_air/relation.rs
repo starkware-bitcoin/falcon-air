@@ -25,6 +25,7 @@ relation!(INTTLookupElements, 1);
 relation!(IButterflyLookupElements, 1);
 relation!(SubLookupElements, 1);
 relation!(RootsLookupElements, 2);
+relation!(InvRootsLookupElements, 2);
 
 #[derive(Debug, Clone)]
 pub enum NTTLookupElements {
@@ -140,6 +141,7 @@ pub struct LookupElements {
     pub low_sig_bound_check: RCLookupElements,
     pub high_sig_bound_check: RCLookupElements,
     pub roots: RootsLookupElements,
+    pub inv_roots: InvRootsLookupElements,
 }
 
 impl LookupElements {
@@ -158,6 +160,7 @@ impl LookupElements {
             low_sig_bound_check: RCLookupElements::draw(channel),
             high_sig_bound_check: RCLookupElements::draw(channel),
             roots: RootsLookupElements::draw(channel),
+            inv_roots: InvRootsLookupElements::draw(channel),
         }
     }
 }

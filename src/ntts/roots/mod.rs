@@ -30,6 +30,7 @@
 //! Each array contains the roots needed for one level of the NTT computation.
 //! The first element of ROOTS_2 is also used as SQ1 in the initial butterfly phase.
 
+pub mod inv_preprocessed;
 pub mod preprocessed;
 
 pub const ROOTS_2: &[u32] = &[1479, 10810];

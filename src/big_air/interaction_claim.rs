@@ -14,7 +14,7 @@
 //! to ensure the overall proof system maintains soundness.
 
 use crate::{
-    HIGH_SIG_BOUND, LOW_SIG_BOUND,
+    HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_LOG_SIZE,
     big_air::relation::{INTTInputLookupElements, LookupElements},
     ntts::{intt, ntt, roots},
     polys::{euclidean_norm, mul, sub},
@@ -62,6 +62,8 @@ pub struct BigInteractionClaim {
     pub range_check: range_check::InteractionClaim,
     /// Interaction claim for roots
     pub roots: Vec<roots::preprocessed::InteractionClaim>,
+    /// Interaction claim for inverse roots
+    pub inv_roots: Vec<roots::inv_preprocessed::InteractionClaim>,
 }
 
 impl BigInteractionClaim {
@@ -86,6 +88,9 @@ impl BigInteractionClaim {
         self.low_sig_bound_check.mix_into(channel);
         self.high_sig_bound_check.mix_into(channel);
         self.range_check.mix_into(channel);
+        self.inv_roots.iter().for_each(|inv_root| {
+            inv_root.mix_into(channel);
+        });
     }
 
     /// Computes the total claimed sum across all interactions.
@@ -119,6 +124,11 @@ impl BigInteractionClaim {
             + self.high_sig_bound_check.claimed_sum
             + self.range_check.claimed_sum
             + self.roots.iter().map(|root| root.claimed_sum).sum::<QM31>()
+            + self
+                .inv_roots
+                .iter()
+                .map(|inv_root| inv_root.claimed_sum)
+                .sum::<QM31>()
     }
 
     /// Generates interaction traces for all components.
@@ -150,6 +160,7 @@ impl BigInteractionClaim {
         high_sig_bound_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
         range_check_trace: &CircleEvaluation<SimdBackend, M31, BitReversedOrder>,
         roots_traces: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
+        inv_roots_traces: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
     ) -> (
         Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         Self,
@@ -224,7 +235,7 @@ impl BigInteractionClaim {
                         INTTInputLookupElements::INTTOutput(lookup_elements.intt.clone())
                     },
                     &lookup_elements.intt,
-                    i + 1,
+                    &lookup_elements.inv_roots,
                 );
             intt_interaction_traces.push(intt_interaction_trace);
             intt_interaction_claims.push(intt_interaction_claim);
@@ -283,6 +294,18 @@ impl BigInteractionClaim {
             roots_interaction_traces.push(roots_interaction_trace);
             roots_interaction_claims.push(roots_interaction_claim);
         }
+        let mut inv_roots_interaction_traces = vec![];
+        let mut inv_roots_interaction_claims = vec![];
+        for (stage, stage_root_trace) in inv_roots_traces.iter().enumerate() {
+            let (inv_roots_interaction_trace, inv_roots_interaction_claim) =
+                roots::inv_preprocessed::InteractionClaim::gen_interaction_trace(
+                    stage_root_trace,
+                    &lookup_elements.inv_roots,
+                    POLY_LOG_SIZE as usize - stage,
+                );
+            inv_roots_interaction_traces.push(inv_roots_interaction_trace);
+            inv_roots_interaction_claims.push(inv_roots_interaction_claim);
+        }
         (
             chain!(
                 f_ntt_butterfly_interaction_trace,
@@ -315,6 +338,11 @@ impl BigInteractionClaim {
                     .flatten()
                     .cloned()
                     .collect_vec(),
+                inv_roots_interaction_traces
+                    .iter()
+                    .flatten()
+                    .cloned()
+                    .collect_vec(),
             )
             .collect_vec(),
             Self {
@@ -332,6 +360,7 @@ impl BigInteractionClaim {
                 high_sig_bound_check: high_sig_bound_check_interaction_claim,
                 range_check: range_check_interaction_claim,
                 roots: roots_interaction_claims,
+                inv_roots: inv_roots_interaction_claims,
             },
         )
     }
