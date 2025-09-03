@@ -15,7 +15,7 @@
 
 use crate::{
     HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_LOG_SIZE,
-    big_air::relation::{INTTInputLookupElements, LookupElements},
+    big_air::relation::{INTTInputLookupElements, InputLookupElements, LookupElements},
     ntts::{intt, ntt, roots},
     polys::{euclidean_norm, mul, sub},
     zq::{Q, range_check},
@@ -180,9 +180,9 @@ impl BigInteractionClaim {
                     &lookup_elements.rc,
                     &lookup_elements.f_ntt,
                     &if i == 0 {
-                        ntt::InputLookupElements::Butterfly(lookup_elements.f_ntt_butterfly.clone())
+                        InputLookupElements::Butterfly(lookup_elements.f_ntt_butterfly.clone())
                     } else {
-                        ntt::InputLookupElements::NTT(lookup_elements.f_ntt.clone())
+                        InputLookupElements::NTT(lookup_elements.f_ntt.clone())
                     },
                     &lookup_elements.roots,
                 );
@@ -205,9 +205,9 @@ impl BigInteractionClaim {
                     &lookup_elements.rc,
                     &lookup_elements.g_ntt,
                     &if i == 0 {
-                        ntt::InputLookupElements::Butterfly(lookup_elements.g_ntt_butterfly.clone())
+                        InputLookupElements::Butterfly(lookup_elements.g_ntt_butterfly.clone())
                     } else {
-                        ntt::InputLookupElements::NTT(lookup_elements.g_ntt.clone())
+                        InputLookupElements::NTT(lookup_elements.g_ntt.clone())
                     },
                     &lookup_elements.roots,
                 );

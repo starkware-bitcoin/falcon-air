@@ -15,6 +15,7 @@
 pub mod claim;
 pub mod interaction_claim;
 pub mod relation;
+pub mod relation_macro;
 
 use crate::{
     POLY_SIZE,

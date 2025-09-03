@@ -15,6 +15,7 @@
 
 use crate::{
     HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_LOG_SIZE, POLY_SIZE,
+    big_air::relation::InputLookupElements,
     ntts::{intt, ntt, roots},
     polys::{euclidean_norm, mul, sub},
     zq::{Q, range_check},
@@ -510,11 +511,9 @@ impl BigClaim {
                         rc_lookup_elements: lookup_elements.rc.clone(),
                         ntt_lookup_elements: lookup_elements.f_ntt.clone(),
                         input_lookup_elements: if i == 0 {
-                            ntt::InputLookupElements::Butterfly(
-                                lookup_elements.f_ntt_butterfly.clone(),
-                            )
+                            InputLookupElements::Butterfly(lookup_elements.f_ntt_butterfly.clone())
                         } else {
-                            ntt::InputLookupElements::NTT(lookup_elements.f_ntt.clone())
+                            InputLookupElements::NTT(lookup_elements.f_ntt.clone())
                         },
                         poly_size: 1 << (i + 1),
                         roots_lookup_elements: lookup_elements.roots.clone(),
@@ -547,11 +546,9 @@ impl BigClaim {
                         rc_lookup_elements: lookup_elements.rc.clone(),
                         ntt_lookup_elements: lookup_elements.g_ntt.clone(),
                         input_lookup_elements: if i == 0 {
-                            ntt::InputLookupElements::Butterfly(
-                                lookup_elements.g_ntt_butterfly.clone(),
-                            )
+                            InputLookupElements::Butterfly(lookup_elements.g_ntt_butterfly.clone())
                         } else {
-                            ntt::InputLookupElements::NTT(lookup_elements.g_ntt.clone())
+                            InputLookupElements::NTT(lookup_elements.g_ntt.clone())
                         },
                         poly_size: 1 << (i + 1),
                         roots_lookup_elements: lookup_elements.roots.clone(),

@@ -14,7 +14,9 @@
 //! Falcon signature scheme implementation.
 
 use stwo::core::channel::Channel;
-use stwo_constraint_framework::{Relation, RelationEFTraitBound, relation};
+use stwo_constraint_framework::relation;
+
+use crate::enum_relation;
 
 relation!(RCLookupElements, 1);
 relation!(FNTTLookupElements, 1);
@@ -27,12 +29,13 @@ relation!(SubLookupElements, 1);
 relation!(RootsLookupElements, 2);
 relation!(InvRootsLookupElements, 2);
 
-#[derive(Debug, Clone)]
-pub enum NTTLookupElements {
-    F(FNTTLookupElements),
-    G(GNTTLookupElements),
-}
-
+enum_relation!(
+    #[derive(Debug, Clone)]
+    pub enum NTTLookupElements {
+        F(FNTTLookupElements),
+        G(GNTTLookupElements),
+    }
+);
 impl NTTLookupElements {
     pub fn f_draw(channel: &mut impl Channel) -> Self {
         Self::F(FNTTLookupElements::draw(channel))
@@ -42,89 +45,22 @@ impl NTTLookupElements {
         Self::G(GNTTLookupElements::draw(channel))
     }
 }
-impl<F, EF> Relation<F, EF> for NTTLookupElements
-where
-    F: Clone,
-    EF: RelationEFTraitBound<F>,
-{
-    fn combine(&self, values: &[F]) -> EF {
-        match self {
-            NTTLookupElements::F(lookup_elements) => lookup_elements.combine(values),
-            NTTLookupElements::G(lookup_elements) => lookup_elements.combine(values),
-        }
-    }
 
-    fn get_name(&self) -> &str {
-        match self {
-            NTTLookupElements::F(lookup_elements) => {
-                <FNTTLookupElements as Relation<F, EF>>::get_name(lookup_elements)
-            }
-            NTTLookupElements::G(lookup_elements) => {
-                <GNTTLookupElements as Relation<F, EF>>::get_name(lookup_elements)
-            }
-        }
+enum_relation!(
+    #[derive(Debug, Clone)]
+    pub enum INTTInputLookupElements {
+        Mul(MulLookupElements),
+        INTTOutput(INTTLookupElements),
     }
+);
 
-    fn get_size(&self) -> usize {
-        match self {
-            NTTLookupElements::F(lookup_elements) => {
-                <FNTTLookupElements as Relation<F, EF>>::get_size(lookup_elements)
-            }
-            NTTLookupElements::G(lookup_elements) => {
-                <GNTTLookupElements as Relation<F, EF>>::get_size(lookup_elements)
-            }
-        }
+enum_relation!(
+    #[derive(Debug, Clone)]
+    pub enum InputLookupElements {
+        NTT(NTTLookupElements),
+        Butterfly(ButterflyLookupElements),
     }
-}
-#[derive(Debug, Clone)]
-pub enum INTTInputLookupElements {
-    Mul(MulLookupElements),
-    INTTOutput(INTTLookupElements),
-}
-
-impl INTTInputLookupElements {
-    pub fn ibutterfly_draw(channel: &mut impl Channel) -> Self {
-        Self::Mul(MulLookupElements::draw(channel))
-    }
-
-    pub fn mul_draw(channel: &mut impl Channel) -> Self {
-        Self::INTTOutput(INTTLookupElements::draw(channel))
-    }
-}
-impl<F, EF> Relation<F, EF> for INTTInputLookupElements
-where
-    F: Clone,
-    EF: RelationEFTraitBound<F>,
-{
-    fn combine(&self, values: &[F]) -> EF {
-        match self {
-            INTTInputLookupElements::Mul(lookup_elements) => lookup_elements.combine(values),
-            INTTInputLookupElements::INTTOutput(lookup_elements) => lookup_elements.combine(values),
-        }
-    }
-
-    fn get_name(&self) -> &str {
-        match self {
-            INTTInputLookupElements::Mul(lookup_elements) => {
-                <MulLookupElements as Relation<F, EF>>::get_name(lookup_elements)
-            }
-            INTTInputLookupElements::INTTOutput(lookup_elements) => {
-                <INTTLookupElements as Relation<F, EF>>::get_name(lookup_elements)
-            }
-        }
-    }
-
-    fn get_size(&self) -> usize {
-        match self {
-            INTTInputLookupElements::Mul(lookup_elements) => {
-                <MulLookupElements as Relation<F, EF>>::get_size(lookup_elements)
-            }
-            INTTInputLookupElements::INTTOutput(lookup_elements) => {
-                <INTTLookupElements as Relation<F, EF>>::get_size(lookup_elements)
-            }
-        }
-    }
-}
+);
 
 #[derive(Debug, Clone)]
 pub struct LookupElements {

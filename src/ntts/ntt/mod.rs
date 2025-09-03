@@ -38,13 +38,12 @@ use stwo::{
     },
 };
 use stwo_constraint_framework::{
-    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEFTraitBound,
-    RelationEntry,
+    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry,
 };
 
 use crate::{
     big_air::relation::{
-        ButterflyLookupElements, NTTLookupElements, RCLookupElements, RootsLookupElements,
+        InputLookupElements, NTTLookupElements, RCLookupElements, RootsLookupElements,
     },
     ntts::{
         ROOTS,
@@ -235,47 +234,6 @@ pub struct Eval {
     pub input_lookup_elements: InputLookupElements,
     /// Lookup elements for roots of unity
     pub roots_lookup_elements: RootsLookupElements,
-}
-
-#[derive(Debug, Clone)]
-pub enum InputLookupElements {
-    NTT(NTTLookupElements),
-    Butterfly(ButterflyLookupElements),
-}
-
-impl<F, EF> Relation<F, EF> for InputLookupElements
-where
-    F: Clone,
-    EF: RelationEFTraitBound<F>,
-{
-    fn combine(&self, values: &[F]) -> EF {
-        match self {
-            InputLookupElements::NTT(lookup_elements) => lookup_elements.combine(values),
-            InputLookupElements::Butterfly(lookup_elements) => lookup_elements.combine(values),
-        }
-    }
-
-    fn get_name(&self) -> &str {
-        match self {
-            InputLookupElements::NTT(lookup_elements) => {
-                <NTTLookupElements as Relation<F, EF>>::get_name(lookup_elements)
-            }
-            InputLookupElements::Butterfly(lookup_elements) => {
-                <ButterflyLookupElements as Relation<F, EF>>::get_name(lookup_elements)
-            }
-        }
-    }
-
-    fn get_size(&self) -> usize {
-        match self {
-            InputLookupElements::NTT(lookup_elements) => {
-                <NTTLookupElements as Relation<F, EF>>::get_size(lookup_elements)
-            }
-            InputLookupElements::Butterfly(lookup_elements) => {
-                <ButterflyLookupElements as Relation<F, EF>>::get_size(lookup_elements)
-            }
-        }
-    }
 }
 
 impl FrameworkEval for Eval {
