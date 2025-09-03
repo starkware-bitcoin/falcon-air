@@ -16,121 +16,42 @@
 use crate::{
     HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_LOG_SIZE,
     big_air::relation::{INTTInputLookupElements, InputLookupElements, LookupElements},
+    impl_big_ic,
     ntts::{intt, ntt, roots},
     polys::{euclidean_norm, mul, sub},
     zq::{Q, range_check},
 };
 use itertools::{Itertools, chain};
 use stwo::{
-    core::{
-        channel::Channel,
-        fields::{m31::M31, qm31::QM31},
-    },
+    core::fields::{m31::M31, qm31::QM31},
     prover::{
         backend::simd::SimdBackend,
         poly::{BitReversedOrder, circle::CircleEvaluation},
     },
 };
 
-#[derive(Debug, Clone)]
-pub struct BigInteractionClaim {
-    /// Interaction claim for butterfly operations
-    pub f_ntt_butterfly: ntt::butterfly::InteractionClaim,
-    /// Interaction claim for NTT operations
-    pub f_ntt_merges: Vec<ntt::InteractionClaim>,
-    /// Interaction claim for butterfly operations
-    pub g_ntt_butterfly: ntt::butterfly::InteractionClaim,
-    /// Interaction claim for NTT operations
-    pub g_ntt_merges: Vec<ntt::InteractionClaim>,
-    /// Interaction claim for multiplication operations
-    pub mul: mul::InteractionClaim,
-    /// Interaction claim for INTT operations
-    pub intt_merges: Vec<intt::InteractionClaim>,
-    /// Interaction claim for INTT operations
-    pub ibutterfly: intt::ibutterfly::InteractionClaim,
-    /// Interaction claim for subtraction operations
-    pub sub: sub::InteractionClaim,
-    /// Interaction claim for euclidean norm operations
-    pub euclidean_norm: euclidean_norm::InteractionClaim,
-    /// Interaction claim for half range checking
-    pub half_range_check: range_check::InteractionClaim,
-    /// Interaction claim for signature bound checking
-    pub low_sig_bound_check: range_check::InteractionClaim,
-    /// Interaction claim for signature bound checking
-    pub high_sig_bound_check: range_check::InteractionClaim,
-    /// Interaction claim for range checking
-    pub range_check: range_check::InteractionClaim,
-    /// Interaction claim for roots
-    pub roots: Vec<roots::preprocessed::InteractionClaim>,
-    /// Interaction claim for inverse roots
-    pub inv_roots: Vec<roots::inv_preprocessed::InteractionClaim>,
-}
+impl_big_ic!(
+    #[derive(Debug, Clone)]
+    pub struct BigInteractionClaim {
+        pub f_ntt_butterfly: ntt::butterfly::InteractionClaim,
+        pub f_ntt_merges: Vec<ntt::InteractionClaim>,
+        pub g_ntt_butterfly: ntt::butterfly::InteractionClaim,
+        pub g_ntt_merges: Vec<ntt::InteractionClaim>,
+        pub mul: mul::InteractionClaim,
+        pub intt_merges: Vec<intt::InteractionClaim>,
+        pub ibutterfly: intt::ibutterfly::InteractionClaim,
+        pub sub: sub::InteractionClaim,
+        pub euclidean_norm: euclidean_norm::InteractionClaim,
+        pub half_range_check: range_check::InteractionClaim,
+        pub low_sig_bound_check: range_check::InteractionClaim,
+        pub high_sig_bound_check: range_check::InteractionClaim,
+        pub range_check: range_check::InteractionClaim,
+        pub roots: Vec<roots::preprocessed::InteractionClaim>,
+        pub inv_roots: Vec<roots::inv_preprocessed::InteractionClaim>,
+    }
+);
 
 impl BigInteractionClaim {
-    /// Mixes all interaction claims into the Fiat-Shamir channel.
-    pub fn mix_into(&self, channel: &mut impl Channel) {
-        self.f_ntt_butterfly.mix_into(channel);
-        self.f_ntt_merges.iter().for_each(|merge| {
-            merge.mix_into(channel);
-        });
-        self.g_ntt_butterfly.mix_into(channel);
-        self.g_ntt_merges.iter().for_each(|merge| {
-            merge.mix_into(channel);
-        });
-        self.mul.mix_into(channel);
-        self.intt_merges.iter().for_each(|merge| {
-            merge.mix_into(channel);
-        });
-        self.ibutterfly.mix_into(channel);
-        self.sub.mix_into(channel);
-        self.euclidean_norm.mix_into(channel);
-        self.half_range_check.mix_into(channel);
-        self.low_sig_bound_check.mix_into(channel);
-        self.high_sig_bound_check.mix_into(channel);
-        self.range_check.mix_into(channel);
-        self.inv_roots.iter().for_each(|inv_root| {
-            inv_root.mix_into(channel);
-        });
-    }
-
-    /// Computes the total claimed sum across all interactions.
-    ///
-    /// This sum should equal zero for a valid proof, ensuring that
-    /// all lookup relations are properly satisfied.
-    pub fn claimed_sum(&self) -> QM31 {
-        self.f_ntt_butterfly.claimed_sum
-            + self
-                .f_ntt_merges
-                .iter()
-                .map(|merge| merge.claimed_sum)
-                .sum::<QM31>()
-            + self.g_ntt_butterfly.claimed_sum
-            + self
-                .g_ntt_merges
-                .iter()
-                .map(|merge| merge.claimed_sum)
-                .sum::<QM31>()
-            + self.mul.claimed_sum
-            + self
-                .intt_merges
-                .iter()
-                .map(|merge| merge.claimed_sum)
-                .sum::<QM31>()
-            + self.ibutterfly.claimed_sum
-            + self.sub.claimed_sum
-            + self.euclidean_norm.claimed_sum
-            + self.half_range_check.claimed_sum
-            + self.low_sig_bound_check.claimed_sum
-            + self.high_sig_bound_check.claimed_sum
-            + self.range_check.claimed_sum
-            + self.roots.iter().map(|root| root.claimed_sum).sum::<QM31>()
-            + self
-                .inv_roots
-                .iter()
-                .map(|inv_root| inv_root.claimed_sum)
-                .sum::<QM31>()
-    }
-
     /// Generates interaction traces for all components.
     ///
     /// # Parameters

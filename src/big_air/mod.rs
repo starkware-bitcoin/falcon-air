@@ -226,7 +226,6 @@ pub fn prove_falcon(
 
     // Generate the final STARK proof
     prove::<SimdBackend, _>(&components, channel, commitment_scheme)
-    // Err(ProvingError::ConstraintsNotSatisfied)
 }
 
 #[cfg(test)]

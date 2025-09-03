@@ -41,7 +41,6 @@ use stwo_constraint_framework::{
 };
 
 use crate::{
-    POLY_LOG_SIZE,
     big_air::relation::{
         INTTInputLookupElements, INTTLookupElements, InvRootsLookupElements, RCLookupElements,
     },
