@@ -30,6 +30,7 @@ use stwo::{
         },
         pcs::TreeVec,
         poly::circle::CanonicCoset,
+        utils::bit_reverse_coset_to_circle_domain_order,
     },
     prover::{
         backend::simd::{SimdBackend, column::BaseColumn, m31::LOG_N_LANES, qm31::PackedQM31},
@@ -37,7 +38,8 @@ use stwo::{
     },
 };
 use stwo_constraint_framework::{
-    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry,
+    FrameworkComponent, FrameworkEval, LogupTraceGenerator, ORIGINAL_TRACE_IDX, Relation,
+    RelationEntry,
 };
 
 use crate::{
@@ -208,10 +210,11 @@ impl Claim {
         (
             trace
                 .into_iter()
-                .map(|val| {
+                .map(|mut col| {
+                    bit_reverse_coset_to_circle_domain_order(&mut col);
                     CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
                         domain,
-                        BaseColumn::from_iter(val),
+                        BaseColumn::from_iter(col),
                     )
                 })
                 .collect::<Vec<_>>(),
@@ -263,12 +266,18 @@ impl FrameworkEval for Eval {
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
         // Extract the filled mask that indicates which positions contain valid data
         let is_first_coeff = eval.next_trace_mask();
+        eval.add_constraint(is_first_coeff.clone() * (is_first_coeff.clone() - E::F::one()));
+
         let is_filled = eval.next_trace_mask();
-        // Initialize collection of split operations for this INTT level
+        eval.add_constraint(is_filled.clone() * (is_filled.clone() - E::F::one()));
 
-        // Process each pair of coefficients (even, odd) for the split operation
+        let [j_prev, j] = eval.next_interaction_mask(ORIGINAL_TRACE_IDX, [-1, 0]);
+        eval.add_constraint(is_first_coeff.clone() * j.clone());
+        eval.add_constraint(
+            (is_first_coeff.clone() - E::F::one())
+                * (j.clone() - j_prev - E::F::one() - E::F::one()),
+        );
 
-        let j = eval.next_trace_mask();
         let inv = eval.next_trace_mask();
         // Extract even and odd coefficients from the trace
         let f_even = eval.next_trace_mask();
@@ -279,10 +288,6 @@ impl FrameworkEval for Eval {
             E::EF::from(is_filled.clone()),
             &[j.clone(), inv.clone()],
         ));
-        eval.add_constraint(is_first_coeff.clone() * (is_first_coeff.clone() - E::F::one()));
-        eval.add_constraint(is_first_coeff * j);
-        eval.add_constraint(is_filled.clone() * (is_filled.clone() - E::F::one()));
-
         // Add input coefficients to lookup relation for verification
         // This ensures the input values are properly connected to the INTT computation
         eval.add_to_relation(RelationEntry::new(

@@ -31,6 +31,7 @@ use stwo::{
         },
         pcs::TreeVec,
         poly::circle::CanonicCoset,
+        utils::bit_reverse_coset_to_circle_domain_order,
     },
     prover::{
         backend::simd::{SimdBackend, column::BaseColumn, m31::LOG_N_LANES, qm31::PackedQM31},
@@ -38,7 +39,8 @@ use stwo::{
     },
 };
 use stwo_constraint_framework::{
-    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry,
+    FrameworkComponent, FrameworkEval, LogupTraceGenerator, ORIGINAL_TRACE_IDX, Relation,
+    RelationEntry,
 };
 
 use crate::{
@@ -200,7 +202,8 @@ impl Claim {
         (
             trace
                 .into_iter()
-                .map(|col| {
+                .map(|mut col| {
+                    bit_reverse_coset_to_circle_domain_order(&mut col);
                     CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
                         domain,
                         BaseColumn::from_iter(col),
@@ -262,20 +265,21 @@ impl FrameworkEval for Eval {
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
         // Extract the filled mask that indicates which positions contain valid data
         let is_first_coeff = eval.next_trace_mask();
-        let is_filled = eval.next_trace_mask();
-        // Initialize collection of merge operations for this NTT level
+        eval.add_constraint(is_first_coeff.clone() * (is_first_coeff.clone() - E::F::one()));
 
-        // Get the j-th root of unity for this polynomial size level
-        let j = eval.next_trace_mask();
+        let is_filled = eval.next_trace_mask();
+        eval.add_constraint(is_filled.clone() * (is_filled.clone() - E::F::one()));
+
+        let [j_prev, j] = eval.next_interaction_mask(ORIGINAL_TRACE_IDX, [-1, 0]);
+        eval.add_constraint(is_first_coeff.clone() * j.clone());
+        eval.add_constraint(
+            (is_first_coeff - E::F::one()) * (j.clone() - j_prev - E::F::one() - E::F::one()),
+        );
+
         let root = eval.next_trace_mask();
         // Extract the left coefficient from the trace
         let coeff_left = eval.next_trace_mask();
         let coeff_right = eval.next_trace_mask();
-
-        eval.add_constraint(is_first_coeff.clone() * (is_first_coeff.clone() - E::F::one()));
-        eval.add_constraint(is_filled.clone() * (is_filled.clone() - E::F::one()));
-
-        eval.add_constraint(is_first_coeff * j.clone());
 
         eval.add_to_relation(RelationEntry::new(
             &self.roots_lookup_elements,
