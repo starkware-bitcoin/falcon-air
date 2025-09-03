@@ -103,3 +103,44 @@ macro_rules! impl_big_ic {
         <QM31 as num_traits::Zero>::zero()
     };
 }
+
+#[macro_export]
+macro_rules! impl_mix_into {
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident { $($body:tt)* }
+    ) => {
+        $(#[$meta])*
+        $vis struct $name { $($body)* }
+
+        impl $name {
+            #[inline]
+            pub fn mix_into(&self, ch: &mut impl stwo::core::channel::Channel) {
+                $crate::impl_mix_into!(@mix_fields self ch; $($body)*);
+            }
+        }
+    };
+
+    // ---------- mix_into muncher ----------
+    // Vec field + trailing comma
+    (@mix_fields $self:ident $ch:ident; $fvis:vis $field:ident : Vec<$inner:ty>, $($rest:tt)*) => {
+        for ic in $self.$field.iter() { ic.mix_into($ch); }
+        $crate::impl_mix_into!(@mix_fields $self $ch; $($rest)*);
+    };
+    // Non-Vec field + trailing comma
+    (@mix_fields $self:ident $ch:ident; $fvis:vis $field:ident : $ty:ty, $($rest:tt)*) => {
+        $self.$field.mix_into($ch);
+        $crate::impl_mix_into!(@mix_fields $self $ch; $($rest)*);
+    };
+    // Vec last field (no trailing comma)
+    (@mix_fields $self:ident $ch:ident; $fvis:vis $field:ident : Vec<$inner:ty>) => {
+        for ic in $self.$field.iter() { ic.mix_into($ch); }
+    };
+    // Non-Vec last field (no trailing comma)
+    (@mix_fields $self:ident $ch:ident; $fvis:vis $field:ident : $ty:ty) => {
+        $self.$field.mix_into($ch);
+    };
+    // Empty (safety)
+    (@mix_fields $self:ident $ch:ident; ) => {};
+
+}

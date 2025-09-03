@@ -16,13 +16,14 @@
 use crate::{
     HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_LOG_SIZE, POLY_SIZE,
     big_air::relation::InputLookupElements,
+    impl_mix_into,
     ntts::{intt, ntt, roots},
     polys::{euclidean_norm, mul, sub},
     zq::{Q, range_check},
 };
 use itertools::{Itertools, chain};
 use stwo::{
-    core::{channel::Channel, fields::m31::M31},
+    core::fields::m31::M31,
     prover::{
         backend::simd::SimdBackend,
         poly::{BitReversedOrder, circle::CircleEvaluation},
@@ -30,40 +31,26 @@ use stwo::{
 };
 use stwo_constraint_framework::preprocessed_columns::PreProcessedColumnId;
 
-#[derive(Debug, Clone)]
-pub struct BigClaim {
-    /// Claim for butterfly operations
-    pub f_ntt_butterfly: ntt::butterfly::Claim,
-    /// Claim for NTT operations
-    pub f_ntt_merges: Vec<ntt::Claim>,
-    /// Claim for butterfly operations
-    pub g_ntt_butterfly: ntt::butterfly::Claim,
-    /// Claim for NTT operations
-    pub g_ntt_merges: Vec<ntt::Claim>,
-    /// Claim for multiplication operations
-    pub mul: mul::Claim,
-    /// Claim for INTT operations
-    pub intt_merges: Vec<intt::Claim>,
-    /// Claim for INTT operations
-    pub ibutterfly: intt::ibutterfly::Claim,
-    /// Claim for subtraction operations
-    pub sub: sub::Claim,
-    /// Claim for euclidean norm operations
-    pub euclidean_norm: euclidean_norm::Claim,
-    /// Claim for half range checking operations
-    pub half_range_check: range_check::Claim,
-    /// Claim for signature bound checking operations
-    pub low_sig_bound_check: range_check::Claim,
-    /// Claim for signature bound checking operations
-    pub high_sig_bound_check: range_check::Claim,
-    /// Claim for range checking operations
-    pub range_check: range_check::Claim,
-    /// Claim for roots operations
-    pub roots: Vec<roots::preprocessed::Claim>,
-    /// Claim for inverse roots operations
-    pub inv_roots: Vec<roots::inv_preprocessed::Claim>,
-}
-
+impl_mix_into!(
+    #[derive(Debug, Clone)]
+    pub struct BigClaim {
+        pub f_ntt_butterfly: ntt::butterfly::Claim,
+        pub f_ntt_merges: Vec<ntt::Claim>,
+        pub g_ntt_butterfly: ntt::butterfly::Claim,
+        pub g_ntt_merges: Vec<ntt::Claim>,
+        pub mul: mul::Claim,
+        pub intt_merges: Vec<intt::Claim>,
+        pub ibutterfly: intt::ibutterfly::Claim,
+        pub sub: sub::Claim,
+        pub euclidean_norm: euclidean_norm::Claim,
+        pub half_range_check: range_check::Claim,
+        pub low_sig_bound_check: range_check::Claim,
+        pub high_sig_bound_check: range_check::Claim,
+        pub range_check: range_check::Claim,
+        pub roots: Vec<roots::preprocessed::Claim>,
+        pub inv_roots: Vec<roots::inv_preprocessed::Claim>,
+    }
+);
 #[derive(Debug, Clone)]
 pub struct AllTraces {
     /// Trace columns from butterfly operations
@@ -152,27 +139,33 @@ impl BigClaim {
 
         let range_check_log_size = crate::zq::Q.ilog2() + 1;
 
+        // The log size is constant because always pass all the coefficients to the NTT component
         let f_ntt_merges = (1..POLY_LOG_SIZE)
             .map(|_| ntt::Claim {
                 log_size: POLY_LOG_SIZE - 1,
             })
             .collect_vec();
+        // The log size is constant because always pass all the coefficients to the NTT component
         let g_ntt_merges = (1..POLY_LOG_SIZE)
             .map(|_| ntt::Claim {
                 log_size: POLY_LOG_SIZE - 1,
             })
             .collect_vec();
+        // The log size is constant because always pass all the coefficients to the INTT component
         let intt_merges = (1..POLY_LOG_SIZE)
             .map(|_| intt::Claim {
                 log_size: POLY_LOG_SIZE - 1,
             })
             .collect_vec();
-        // TODO: add the last roots when butterfly is using this preprocessed column as well
+
+        // For each stage n of the NTT merges, the roots needed size are 2 ^ (n + 2)
         let roots = (2..=POLY_LOG_SIZE)
             .map(|i| roots::preprocessed::Claim {
                 log_size: std::cmp::max(LOG_N_LANES, i),
             })
             .collect_vec();
+
+        // For each stage n of the NTT merges, the roots needed size are 2 ^ (POLY_LOG_SIZE - n)
         let inv_roots = (2..=POLY_LOG_SIZE)
             .rev()
             .map(|i| roots::inv_preprocessed::Claim {
@@ -180,68 +173,53 @@ impl BigClaim {
             })
             .collect_vec();
         Self {
+            // In the butterfly component we have 2 coefficients per row so we only need POLY_LOG_SIZE - 1 rows
             f_ntt_butterfly: ntt::butterfly::Claim {
                 log_size: POLY_LOG_SIZE - 1,
             },
             f_ntt_merges,
+            // In the butterfly component we have 2 coefficients per row so we only need POLY_LOG_SIZE - 1 rows
             g_ntt_butterfly: ntt::butterfly::Claim {
                 log_size: POLY_LOG_SIZE - 1,
             },
             g_ntt_merges,
+            // In the multiplication component we have 1 coefficient per row so we need POLY_LOG_SIZE rows
             mul: mul::Claim {
                 log_size: POLY_LOG_SIZE,
             },
             intt_merges,
+            // In the INTT butterfly component we have 2 coefficients per row so we only need POLY_LOG_SIZE - 1 rows
             ibutterfly: intt::ibutterfly::Claim {
                 log_size: POLY_LOG_SIZE - 1,
             },
+            // In the subtraction component we have 1 coefficient per row so we need POLY_LOG_SIZE rows
             sub: sub::Claim {
                 log_size: POLY_LOG_SIZE,
             },
+            // In the euclidean norm component we have 2 coefficients per row so we need POLY_LOG_SIZE
+            // rows to compute the euclidean norm of 2 polynomials (which is what we're doing here)
             euclidean_norm: euclidean_norm::Claim {
                 log_size: POLY_LOG_SIZE,
             },
+            // Range check Q/2 so only need range_check_log_size - 1 rows
             half_range_check: range_check::Claim {
                 log_size: range_check_log_size - 1,
             },
+            // Range check LOW_SIG_BOUND so only need LOW_SIG_BOUND.next_power_of_two().ilog2() rows
             low_sig_bound_check: range_check::Claim {
                 log_size: LOW_SIG_BOUND.next_power_of_two().ilog2(),
             },
+            // Range check HIGH_SIG_BOUND so only need HIGH_SIG_BOUND.next_power_of_two().ilog2() rows
             high_sig_bound_check: range_check::Claim {
                 log_size: HIGH_SIG_BOUND.next_power_of_two().ilog2(),
             },
+            // Range check Q so only need range_check_log_size rows
             range_check: range_check::Claim {
                 log_size: range_check_log_size,
             },
             roots,
             inv_roots,
         }
-    }
-
-    /// Mixes all claim parameters into the Fiat-Shamir channel.
-    ///
-    /// This ensures that the proof is deterministic and all components
-    /// contribute to the randomness.
-    pub fn mix_into(&self, channel: &mut impl Channel) {
-        self.f_ntt_butterfly.mix_into(channel);
-        self.f_ntt_merges.iter().for_each(|merge| {
-            merge.mix_into(channel);
-        });
-        self.g_ntt_butterfly.mix_into(channel);
-        self.g_ntt_merges.iter().for_each(|merge| {
-            merge.mix_into(channel);
-        });
-        self.mul.mix_into(channel);
-        self.intt_merges.iter().for_each(|merge| {
-            merge.mix_into(channel);
-        });
-        self.ibutterfly.mix_into(channel);
-        self.sub.mix_into(channel);
-        self.euclidean_norm.mix_into(channel);
-        self.half_range_check.mix_into(channel);
-        self.low_sig_bound_check.mix_into(channel);
-        self.high_sig_bound_check.mix_into(channel);
-        self.range_check.mix_into(channel);
     }
 
     /// Generates traces for all arithmetic operations.
