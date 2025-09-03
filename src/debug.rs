@@ -1,17 +1,32 @@
 //! # Debug Utilities
 //!
-//! This module provides debugging utilities for the Falcon-AIR STARK proof system.
-//! It includes functions for constraint verification and trace validation to help
-//! with development and testing of the proof components.
+//! This module provides comprehensive debugging utilities for the Falcon-AIR STARK proof system.
+//! It includes functions for constraint verification, trace validation, and testing infrastructure
+//! to help with development and validation of the proof components.
 //!
 //! # Features
 //!
 //! - **Constraint Verification**: Validates that all arithmetic constraints are satisfied
 //! - **Trace Validation**: Ensures trace generation produces correct results
 //! - **Mock Commitment Scheme**: Provides a simplified commitment scheme for testing
+//! - **Component Testing**: Comprehensive testing of all proof components
 //! - **Debug Assertions**: Helper functions for development and debugging
 //!
-//! This module is primarily used during development and testing phases.
+//! # Usage
+//!
+//! This module is primarily used during development and testing phases to:
+//! - Verify the correctness of STARK proof generation
+//! - Test individual components in isolation
+//! - Debug constraint violations and trace errors
+//! - Validate the complete proof system integration
+//!
+//! # Testing Strategy
+//!
+//! The debug utilities provide a complete testing framework that:
+//! - Tests all arithmetic operations (addition, multiplication, subtraction)
+//! - Validates NTT and INTT operations
+//! - Checks range checking and signature bound validation
+//! - Verifies lookup relations and interaction claims
 
 #![allow(unused)]
 
@@ -47,6 +62,30 @@ use crate::zq::range_check::RangeCheck;
 use crate::zq::{Q, range_check};
 use crate::{HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_LOG_SIZE, POLY_SIZE, SIGNATURE_BOUND};
 
+/// Asserts that all constraints are satisfied for the given Falcon signature inputs.
+///
+/// This function performs comprehensive constraint verification for the complete
+/// STARK proof system, including all arithmetic operations, NTT transformations,
+/// range checking, and signature validation.
+///
+/// # Parameters
+///
+/// - `s1`: The signature polynomial S1 with coefficients in [0, Q)
+/// - `pk`: The public key polynomial with coefficients in [0, Q)
+/// - `msg_point`: The message point polynomial with coefficients in [0, Q)
+///
+/// # What This Function Tests
+///
+/// 1. **Preprocessed Columns**: Range check tables and root of unity values
+/// 2. **Main Traces**: All arithmetic operations and NTT transformations
+/// 3. **Interaction Traces**: Lookup relations and range checking
+/// 4. **Component Constraints**: Individual component constraint satisfaction
+/// 5. **Lookup Protocol**: Validation that all lookup relations sum to zero
+///
+/// # Panics
+///
+/// This function will panic if any constraint is violated, providing detailed
+/// error information about which component failed validation.
 pub fn assert_constraints(
     s1: &[u32; POLY_SIZE],
     pk: &[u32; POLY_SIZE],
@@ -139,6 +178,25 @@ pub fn assert_constraints(
     );
 }
 
+/// Mock commitment scheme for testing and debugging purposes.
+///
+/// This struct provides a simplified commitment scheme that avoids the complexity
+/// of low degree extension and Merkle commitments. It's used during development
+/// and testing to validate constraint satisfaction without the overhead of
+/// full cryptographic commitments.
+///
+/// # Fields
+///
+/// - `trees`: A collection of trace trees containing the evaluation data
+///   for all proof components (preprocessed, main, and interaction traces)
+///
+/// # Usage
+///
+/// This mock scheme is used in the debug utilities to:
+/// - Validate constraint satisfaction across all components
+/// - Test trace generation and evaluation logic
+/// - Debug constraint violations without cryptographic overhead
+/// - Provide a simplified testing environment
 #[derive(Default)]
 pub struct MockCommitmentScheme {
     trees: TreeVec<ColumnVec<Vec<M31>>>,
@@ -164,8 +222,25 @@ impl MockCommitmentScheme {
     }
 }
 
-/// A [`TreeBuilder`] used by [`MockCommitmentScheme`] to aggregate trace values.
-/// This implementation avoids low degree extension and Merkle commitments.
+/// A mock tree builder used by [`MockCommitmentScheme`] to aggregate trace values.
+///
+/// This implementation provides a simplified tree building interface that avoids
+/// the complexity of low degree extension and Merkle commitments. It's designed
+/// for testing and debugging purposes where cryptographic security is not required.
+///
+/// # Fields
+///
+/// - `tree_index`: The index of the current tree being built
+/// - `evals`: The evaluation data for the current tree
+/// - `commitment_scheme`: Reference to the parent commitment scheme
+///
+/// # Purpose
+///
+/// This mock builder is used to:
+/// - Collect trace evaluations from proof components
+/// - Organize data into trace trees for validation
+/// - Provide a simplified interface for testing
+/// - Avoid cryptographic overhead during development
 pub struct MockTreeBuilder<'a> {
     tree_index: usize,
     evals: ColumnVec<Vec<M31>>,
@@ -221,6 +296,36 @@ impl<B: BackendForChannel<MC>, MC: MerkleChannel> TreeBuilder<B>
     }
 }
 
+/// Asserts that all proof components satisfy their constraints.
+///
+/// This function performs comprehensive constraint verification across all
+/// components of the Big AIR proof system. It tests each component individually
+/// and validates that all constraints are satisfied.
+///
+/// # Parameters
+///
+/// - `trace`: The complete trace data containing all evaluation values
+/// - `components`: Tuple containing all proof components to be tested
+///
+/// # Components Tested
+///
+/// 1. **NTT Components**: Forward NTT butterfly and merge operations
+/// 2. **Arithmetic Components**: Multiplication, subtraction, and Euclidean norm
+/// 3. **Range Check Components**: Various range checking operations
+/// 4. **Root Components**: Precomputed roots of unity validation
+///
+/// # Testing Process
+///
+/// For each component, this function:
+/// - Extracts the relevant trace data for that component
+/// - Evaluates all constraints defined by the component
+/// - Verifies that the claimed sums are correct
+/// - Reports any constraint violations with detailed information
+///
+/// # Panics
+///
+/// This function will panic if any component fails constraint validation,
+/// providing detailed information about which component and constraint failed.
 #[allow(clippy::type_complexity)]
 fn assert_components(
     trace: TreeVec<Vec<&Vec<M31>>>,
@@ -259,46 +364,75 @@ fn assert_components(
         roots,
         inv_roots,
     ) = components;
+    // Test forward NTT butterfly operations for F polynomial
     println!("f_ntt_butterfly");
     assert_component(f_ntt_butterfly, &trace);
+
+    // Test forward NTT merge operations for F polynomial
     println!("f_ntt_merges");
     for (i, merge) in f_ntt_merges.iter().enumerate() {
         println!("merge {}", i);
         assert_component(merge, &trace);
     }
+
+    // Test forward NTT butterfly operations for G polynomial
     println!("g_ntt_butterfly");
     assert_component(g_ntt_butterfly, &trace);
+
+    // Test forward NTT merge operations for G polynomial
     println!("g_ntt_merges");
     for (i, merge) in g_ntt_merges.iter().enumerate() {
         println!("merge {}", i);
         assert_component(merge, &trace);
     }
+
+    // Test modular multiplication operations
     println!("mul");
     assert_component(mul, &trace);
+
+    // Test inverse NTT split operations
     println!("intt");
     for (i, intt) in intt_components.iter().enumerate() {
         println!("split {}", i);
         assert_component(intt, &trace);
     }
+
+    // Test inverse NTT butterfly operations
     println!("ibutterfly");
     assert_component(ibutterfly, &trace);
+
+    // Test modular subtraction operations
     println!("sub");
     assert_component(sub, &trace);
+
+    // Test Euclidean norm computation
     println!("euclidean_norm");
     assert_component(euclidean_norm, &trace);
+
+    // Test half-range checking (0 to Q/2)
     println!("half_range_check");
     assert_component(half_range_check, &trace);
+
+    // Test low signature bound checking
     println!("low_sig_bound_check");
     assert_component(low_sig_bound_check, &trace);
+
+    // Test high signature bound checking
     println!("high_sig_bound_check");
     assert_component(high_sig_bound_check, &trace);
+
+    // Test full range checking (0 to Q)
     println!("range_check");
     assert_component(range_check, &trace);
+
+    // Test precomputed roots of unity validation
     println!("roots");
     for (i, root) in roots.iter().enumerate() {
         println!("root {}", i);
         assert_component(root, &trace);
     }
+
+    // Test precomputed inverse roots of unity validation
     println!("inv_roots");
     for (i, inv_root) in inv_roots.iter().enumerate() {
         println!("inv_root {}", i);
@@ -306,22 +440,57 @@ fn assert_components(
     }
 }
 
+/// Asserts that a single proof component satisfies all its constraints.
+///
+/// This function validates that a specific proof component correctly
+/// evaluates all its constraints using the provided trace data.
+///
+/// # Type Parameters
+///
+/// - `E`: The evaluation type that implements `FrameworkEval + Sync`
+///
+/// # Parameters
+///
+/// - `component`: The proof component to be tested
+/// - `trace`: The complete trace data containing all evaluation values
+///
+/// # What This Function Tests
+///
+/// 1. **Trace Extraction**: Extracts the relevant trace data for the component
+/// 2. **Constraint Evaluation**: Evaluates all constraints defined by the component
+/// 3. **Claimed Sum Validation**: Verifies that the component's claimed sum is correct
+/// 4. **Constraint Satisfaction**: Ensures all constraints are satisfied
+///
+/// # Panics
+///
+/// This function will panic if the component fails constraint validation,
+/// providing detailed information about which constraint failed.
 fn assert_component<E: FrameworkEval + Sync>(
     component: &FrameworkComponent<E>,
     trace: &TreeVec<Vec<&Vec<M31>>>,
 ) {
+    // Extract the trace data relevant to this specific component
+    // This includes the main trace and any interaction traces needed
     let mut component_trace = trace
         .sub_tree(component.trace_locations())
         .map(|tree| tree.into_iter().cloned().collect_vec());
+
+    // Set up the preprocessed columns for this component
+    // These contain lookup tables and other precomputed values
     component_trace[PREPROCESSED_TRACE_IDX] = component
         .preproccessed_column_indices()
         .iter()
         .map(|idx| trace[PREPROCESSED_TRACE_IDX][*idx])
         .collect();
 
+    // Get the log size for this component's trace
     let log_size = component.log_size();
 
+    // Get a reference to the component's evaluation logic
     let component_eval = component.deref();
+
+    // Assert that all constraints are satisfied on the component's trace
+    // This validates the mathematical correctness of the component
     assert_constraints_on_trace(
         &component_trace,
         log_size,
