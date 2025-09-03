@@ -28,7 +28,7 @@
 //! - Checks range checking and signature bound validation
 //! - Verifies lookup relations and interaction claims
 
-#![allow(unused)]
+pub mod relation_tracker;
 
 use std::ops::Deref;
 
@@ -41,8 +41,6 @@ use stwo::core::channel::{Blake2sChannel, MerkleChannel};
 use stwo::core::fields::m31::M31;
 use stwo::core::pcs::{TreeSubspan, TreeVec};
 
-use stwo::core::vcs::blake2_merkle::Blake2sMerkleChannel;
-use stwo::prover::backend::simd::m31::LOG_N_LANES;
 use stwo::prover::backend::{Backend, BackendForChannel, Column};
 use stwo::prover::poly::BitReversedOrder;
 use stwo::prover::poly::circle::CircleEvaluation;
@@ -51,16 +49,15 @@ use stwo_constraint_framework::{
     assert_constraints_on_trace,
 };
 
-use crate::big_air::relation::INTTInputLookupElements;
 use crate::big_air::{
     claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements,
 };
 use crate::ntts::{intt, ntt, roots};
 use crate::polys::sub;
 use crate::polys::{euclidean_norm, mul};
-use crate::zq::range_check::RangeCheck;
+
 use crate::zq::{Q, range_check};
-use crate::{HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_LOG_SIZE, POLY_SIZE, SIGNATURE_BOUND};
+use crate::{HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_SIZE};
 
 /// Asserts that all constraints are satisfied for the given Falcon signature inputs.
 ///
@@ -92,7 +89,6 @@ pub fn assert_constraints(
     msg_point: &[u32; POLY_SIZE],
 ) {
     let mut commitment_scheme = MockCommitmentScheme::default();
-    let range_check_log_size = Q.ilog2() + 1;
 
     // Preprocessed trace.
     let (preprocessed_columns, preprocessed_columns_ids) =
@@ -278,7 +274,7 @@ impl<B: Backend> TreeBuilder<B> for MockTreeBuilder<'_> {
 }
 
 // Extenders of a commitment-tree with evaluations.
-trait TreeBuilder<B: Backend> {
+pub trait TreeBuilder<B: Backend> {
     fn extend_evals(
         &mut self,
         columns: impl IntoIterator<Item = CircleEvaluation<B, M31, BitReversedOrder>>,

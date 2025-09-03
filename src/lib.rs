@@ -18,7 +18,6 @@ pub mod big_air;
 pub mod debug;
 pub mod ntts;
 pub mod polys;
-pub mod relation_tracker;
 pub mod zq;
 
 /// Logarithm of the polynomial size used in NTT operations.

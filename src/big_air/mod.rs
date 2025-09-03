@@ -150,7 +150,9 @@ pub fn prove_falcon(
 
     #[cfg(test)]
     {
-        use crate::relation_tracker::{BigAirComponents, track_and_summarize_big_air_relations};
+        use crate::debug::relation_tracker::{
+            BigAirComponents, track_and_summarize_big_air_relations,
+        };
 
         let components = &BigAirComponents {
             f_ntt_butterfly: &f_ntt_butterfly_component,
