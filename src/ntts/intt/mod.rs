@@ -30,6 +30,7 @@ use stwo::{
         },
         pcs::TreeVec,
         poly::circle::CanonicCoset,
+        utils::bit_reverse_coset_to_circle_domain_order,
     },
     prover::{
         backend::simd::{SimdBackend, column::BaseColumn, m31::LOG_N_LANES, qm31::PackedQM31},
@@ -37,7 +38,8 @@ use stwo::{
     },
 };
 use stwo_constraint_framework::{
-    FrameworkComponent, FrameworkEval, LogupTraceGenerator, Relation, RelationEntry,
+    FrameworkComponent, FrameworkEval, LogupTraceGenerator, ORIGINAL_TRACE_IDX, Relation,
+    RelationEntry,
 };
 
 use crate::{
@@ -104,11 +106,12 @@ impl Claim {
     ) {
         let mut output_polys = vec![];
 
-        let mut trace = vec![vec![]; 15];
+        let mut trace = vec![vec![]; 16];
         let mut remainders = vec![];
         let mut js = vec![];
         let mut row = 0;
         trace[0] = vec![0; 1 << self.log_size];
+        trace[1] = vec![0; 1 << self.log_size];
 
         for poly in input_polys.iter() {
             let mut f0_ntt = vec![];
@@ -126,29 +129,32 @@ impl Claim {
                 // Note: We use regular roots here but will inverse later
                 let root = INVERSES_MOD_Q[ROOTS[poly.len().ilog2() as usize - 1][j] as usize];
                 js.push(j as u32);
-                trace[0][row] = 1;
+                if j == 0 {
+                    trace[0][row] = 1;
+                }
+                trace[1][row] = 1;
                 row += 1;
-                trace[1].push(j as u32);
-                trace[2].push(root);
+                trace[2].push(j as u32);
+                trace[3].push(root);
 
-                trace[3].push(*f_even);
-                trace[4].push(*f_odd);
+                trace[4].push(*f_even);
+                trace[5].push(*f_odd);
 
                 // Step 1: Add even and odd coefficients
                 // f_even[i] + f_odd[i]
                 let f_even_plus_f_odd_quotient = (*f_even + *f_odd) / Q;
                 let f_even_plus_f_odd_remainder = (*f_even + *f_odd) % Q;
 
-                trace[5].push(f_even_plus_f_odd_quotient);
-                trace[6].push(f_even_plus_f_odd_remainder);
+                trace[6].push(f_even_plus_f_odd_quotient);
+                trace[7].push(f_even_plus_f_odd_remainder);
 
                 // Step 2: Apply scaling factor I2 to the sum
                 // I2 * (f_even[i] + f_odd[i]) where I2 = inv(2) mod q
                 let i2_times_f_even_plus_f_odd_quotient = (I2 * f_even_plus_f_odd_remainder) / Q;
                 let i2_times_f_even_plus_f_odd_remainder = (I2 * f_even_plus_f_odd_remainder) % Q;
 
-                trace[7].push(i2_times_f_even_plus_f_odd_quotient);
-                trace[8].push(i2_times_f_even_plus_f_odd_remainder);
+                trace[8].push(i2_times_f_even_plus_f_odd_quotient);
+                trace[9].push(i2_times_f_even_plus_f_odd_remainder);
 
                 // Step 3: Subtract odd from even coefficients
                 // f_even[i] - f_odd[i] (with borrow handling for modular subtraction)
@@ -156,16 +162,16 @@ impl Claim {
                 let f_even_minus_f_odd_remainder =
                     (*f_even + f_even_minus_f_odd_borrow * Q - *f_odd) % Q;
 
-                trace[9].push(f_even_minus_f_odd_borrow);
-                trace[10].push(f_even_minus_f_odd_remainder);
+                trace[10].push(f_even_minus_f_odd_borrow);
+                trace[11].push(f_even_minus_f_odd_remainder);
 
                 // Step 4: Apply scaling factor I2 to the difference
                 // I2 * (f_even[i] - f_odd[i])
                 let i2_times_f_even_minus_f_odd_quotient = (I2 * f_even_minus_f_odd_remainder) / Q;
                 let i2_times_f_even_minus_f_odd_remainder = (I2 * f_even_minus_f_odd_remainder) % Q;
 
-                trace[11].push(i2_times_f_even_minus_f_odd_quotient);
-                trace[12].push(i2_times_f_even_minus_f_odd_remainder);
+                trace[12].push(i2_times_f_even_minus_f_odd_quotient);
+                trace[13].push(i2_times_f_even_minus_f_odd_remainder);
 
                 // Step 5: Multiply by inverse root of unity
                 // I2 * (f_even[i] - f_odd[i]) * inv_root[i] where inv_root[i] = 1/root[i]
@@ -174,8 +180,8 @@ impl Claim {
                 let i2_times_f_even_minus_f_odd_times_root_inv_remainder =
                     (i2_times_f_even_minus_f_odd_remainder * root) % Q;
 
-                trace[13].push(i2_times_f_even_minus_f_odd_times_root_inv_quotient);
-                trace[14].push(i2_times_f_even_minus_f_odd_times_root_inv_remainder);
+                trace[14].push(i2_times_f_even_minus_f_odd_times_root_inv_quotient);
+                trace[15].push(i2_times_f_even_minus_f_odd_times_root_inv_remainder);
 
                 // Store the results for the next recursive level
                 f0_ntt.push(i2_times_f_even_plus_f_odd_remainder);
@@ -192,11 +198,11 @@ impl Claim {
             .map(|col| col.into_iter().map(M31).collect_vec())
             .collect_vec();
 
-        remainders.extend(trace[6].clone());
-        remainders.extend(trace[8].clone());
-        remainders.extend(trace[10].clone());
-        remainders.extend(trace[12].clone());
-        remainders.extend(trace[14].clone());
+        remainders.extend(trace[7].clone());
+        remainders.extend(trace[9].clone());
+        remainders.extend(trace[11].clone());
+        remainders.extend(trace[13].clone());
+        remainders.extend(trace[15].clone());
 
         // Convert the trace values to circle evaluations for the proof system
         let domain = CanonicCoset::new(self.log_size).circle_domain();
@@ -204,10 +210,11 @@ impl Claim {
         (
             trace
                 .into_iter()
-                .map(|val| {
+                .map(|mut col| {
+                    bit_reverse_coset_to_circle_domain_order(&mut col);
                     CircleEvaluation::<SimdBackend, _, BitReversedOrder>::new(
                         domain,
-                        BaseColumn::from_iter(val),
+                        BaseColumn::from_iter(col),
                     )
                 })
                 .collect::<Vec<_>>(),
@@ -258,12 +265,19 @@ impl FrameworkEval for Eval {
     /// modular arithmetic operations are correctly verified through range checking.
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
         // Extract the filled mask that indicates which positions contain valid data
+        let is_first_coeff = eval.next_trace_mask();
+        eval.add_constraint(is_first_coeff.clone() * (is_first_coeff.clone() - E::F::one()));
+
         let is_filled = eval.next_trace_mask();
-        // Initialize collection of split operations for this INTT level
+        eval.add_constraint(is_filled.clone() * (is_filled.clone() - E::F::one()));
 
-        // Process each pair of coefficients (even, odd) for the split operation
+        let [j_prev, j] = eval.next_interaction_mask(ORIGINAL_TRACE_IDX, [-1, 0]);
+        eval.add_constraint(is_first_coeff.clone() * j.clone());
+        eval.add_constraint(
+            (is_first_coeff.clone() - E::F::one())
+                * (j.clone() - j_prev - E::F::one() - E::F::one()),
+        );
 
-        let j = eval.next_trace_mask();
         let inv = eval.next_trace_mask();
         // Extract even and odd coefficients from the trace
         let f_even = eval.next_trace_mask();
@@ -272,9 +286,8 @@ impl FrameworkEval for Eval {
         eval.add_to_relation(RelationEntry::new(
             &self.inv_roots_lookup_elements,
             E::EF::from(is_filled.clone()),
-            &[j, inv.clone()],
+            &[j.clone(), inv.clone()],
         ));
-
         // Add input coefficients to lookup relation for verification
         // This ensures the input values are properly connected to the INTT computation
         eval.add_to_relation(RelationEntry::new(
@@ -411,20 +424,20 @@ impl InteractionClaim {
         InteractionClaim,
     ) {
         let log_size = trace[0].domain.log_size();
-        let is_filled = trace[0].clone();
+        let is_filled = trace[1].clone();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
 
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            let j = trace[1].data[vec_row]; // must have all lanes populated
-            let inv_root = trace[2].data[vec_row]; // must have all lanes populated
+            let j = trace[2].data[vec_row]; // must have all lanes populated
+            let inv_root = trace[3].data[vec_row]; // must have all lanes populated
             let denom: PackedQM31 = inv_roots_lookup_elements.combine(&[j, inv_root]);
             col_gen.write_frac(vec_row, PackedQM31::from(is_filled.data[vec_row]), denom);
         }
         col_gen.finalize_col();
 
         // input linking
-        for col_offset in [3, 4] {
+        for col_offset in [4, 5] {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 let v = trace[col_offset].data[vec_row]; // must have all lanes populated
@@ -434,7 +447,7 @@ impl InteractionClaim {
             col_gen.finalize_col();
         }
         // range check
-        for col_offset in [6, 8, 10, 12, 14] {
+        for col_offset in [7, 9, 11, 13, 15] {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 let v = trace[col_offset].data[vec_row]; // must have all lanes populated
@@ -446,7 +459,7 @@ impl InteractionClaim {
 
         // output linking
 
-        for col_offset in [8, 14] {
+        for col_offset in [9, 15] {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 let v = trace[col_offset].data[vec_row]; // must have all lanes populated
