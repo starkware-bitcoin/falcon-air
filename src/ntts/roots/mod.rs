@@ -1,3 +1,38 @@
+//! Precomputed Roots of Unity for NTT Operations
+//!
+//! This module contains precomputed roots of unity for all polynomial sizes used in the NTT.
+//! These roots are essential for efficient NTT computation and are used in the recursive
+//! merging phase of the algorithm.
+//!
+//! # Mathematical Properties
+//!
+//! A root of unity ω in the field Z_q satisfies:
+//! - ω^n ≡ 1 (mod q) where n is the polynomial size
+//! - ω^k ≢ 1 (mod q) for 0 < k < n
+//!
+//! For polynomial size 2^k, we need 2^(k-1) roots of unity for the NTT computation.
+//! Each root ω[i] is used in the butterfly operations at level i of the NTT.
+//!
+//! # Field Parameters
+//!
+//! - Field size: q = 12289 (12 * 1024 + 1)
+//! - Primitive root: g = 7 (generator of the multiplicative group)
+//! - Roots are computed as: ω[i] = g^((q-1)/n) mod q
+//!
+//! # Usage in NTT
+//!
+//! The roots are used in the recursive merging phase of the NTT algorithm:
+//! - ROOTS_2: Used for polynomials of size 2
+//! - ROOTS_4: Used for polynomials of size 4
+//! - ROOTS_8: Used for polynomials of size 8
+//! - And so on up to ROOTS_1024 for polynomials of size 1024
+//!
+//! Each array contains the roots needed for one level of the NTT computation.
+//! The first element of ROOTS_2 is also used as SQ1 in the initial butterfly phase.
+
+pub mod inv_preprocessed;
+pub mod preprocessed;
+
 pub const ROOTS_2: &[u32] = &[1479, 10810];
 
 pub const ROOTS_4: &[u32] = &[4043, 8246, 5146, 7143];

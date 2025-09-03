@@ -1,14 +1,49 @@
 //! # Modular Subtraction Component
 //!
-//! This module implements STARK proof components for modular subtraction operations.
+//! This module implements STARK proof components for modular subtraction operations
+//! over the finite field Z_q where q = 12289.
 //!
-//! The modular subtraction operation computes (a - b) mod q, where q = 12289.
+//! # Mathematical Foundation
+//!
+//! The modular subtraction operation computes (a - b) mod q, where a, b ∈ [0, q).
 //! The operation is decomposed into:
-//! - a - b = remainder (mod q)
-//! - where remainder ∈ [0, q)
 //!
-//! The component generates traces for the operands (a, b) and remainder,
-//! and enforces the constraint that the remainder is within the valid range.
+//! a - b = borrow * q + remainder
+//!
+//! where:
+//! - remainder ∈ [0, q) (the result of modular subtraction)
+//! - borrow ∈ {0, 1} (indicates if a < b, requiring field addition)
+//!
+//! # Algorithm Details
+//!
+//! The subtraction is implemented using the following logic:
+//! - If a ≥ b: borrow = 0, remainder = a - b
+//! - If a < b: borrow = 1, remainder = a + q - b
+//!
+//! This ensures that the result is always in the range [0, q) and properly
+//! handles the modular arithmetic requirements.
+//!
+//! # Trace Structure
+//!
+//! The component generates traces with the following columns:
+//! - Column 0: First operand a
+//! - Column 1: Second operand b  
+//! - Column 2: Borrow bit (0 or 1)
+//! - Column 3: Remainder (result of modular subtraction)
+//!
+//! # Range Checking
+//!
+//! The component enforces constraints that ensure:
+//! - All operands are within [0, q)
+//! - The remainder is within [0, q)
+//! - The borrow bit is either 0 or 1
+//! - The modular arithmetic relationship holds: a - b = borrow * q + remainder
+//!
+//! # Usage
+//!
+//! This component is used in polynomial arithmetic operations where modular
+//! subtraction is required, such as in the Falcon signature scheme for
+//! coefficient-wise polynomial operations.
 
 use num_traits::One;
 use stwo::{
@@ -29,14 +64,19 @@ use stwo_constraint_framework::{
 };
 
 use crate::{
-    big_air::relation::{INTTLookupElements, RCLookupElements, SubLookupElements},
+    big_air::relation::{
+        IButterflyLookupElements, LookupElements, RCLookupElements, SubLookupElements,
+    },
     zq::{Q, sub::SubMod},
 };
 
-// This is a helper function for the prover to generate the trace for the sub component
+/// Claim parameters for the modular subtraction circuit.
+///
+/// Contains the logarithmic size of the trace, which determines the number of
+/// subtraction operations that can be proven.
 #[derive(Debug, Clone)]
 pub struct Claim {
-    /// The log base 2 of the trace size
+    /// The log base 2 of the trace size (determines number of operations: 2^log_size)
     pub log_size: u32,
 }
 
@@ -49,14 +89,35 @@ impl Claim {
         TreeVec::new(vec![vec![], trace_log_sizes, vec![]])
     }
 
-    /// Mixes the claim parameters into the Fiat-Shamir channel.
+    /// Mixes the claim parameters into the Fiat-Shamir channel for non-interactive proof generation.
+    ///
+    /// This ensures the proof is bound to the specific trace size used and prevents
+    /// parameter substitution attacks.
     pub fn mix_into(&self, channel: &mut impl Channel) {
         channel.mix_u64(self.log_size as u64);
     }
 
-    /// Generates the trace for the sub component
-    /// Generates 2 random numbers and creates a trace for the sub component
-    /// returns the columns in this order: a, b, borrow, remainder
+    /// Generates the trace for the modular subtraction component.
+    ///
+    /// Creates a trace representing modular subtraction operations for pairs of operands.
+    /// Each operation is decomposed into borrow and remainder parts.
+    ///
+    /// # Algorithm
+    ///
+    /// For each pair (a, b):
+    /// - borrow = (a < b) ? 1 : 0
+    /// - remainder = a + borrow * Q - b
+    ///
+    /// # Parameters
+    ///
+    /// - `a`: First operand array with values in [0, Q)
+    /// - `b`: Second operand array with values in [0, Q)
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple containing:
+    /// - `ColumnVec<CircleEvaluation<...>>`: The computation trace columns (a, b, borrow, remainder)
+    /// - `Vec<M31>`: Remainder values for range checking
     pub fn gen_trace(
         &self,
         a: &[u32],
@@ -100,15 +161,15 @@ impl Claim {
     }
 }
 
-// Actual component that is used in the framework
+/// Component used in the framework for modular subtraction evaluation.
 #[derive(Debug, Clone)]
 pub struct Eval {
     /// The claim parameters
     pub claim: Claim,
     /// Lookup elements for range checking
     pub rc_lookup_elements: RCLookupElements,
-    /// Lookup elements for intt operations
-    pub intt_lookup_elements: INTTLookupElements,
+    /// Lookup elements for INTT operations
+    pub ibutterfly_lookup_elements: IButterflyLookupElements,
     /// Lookup elements for subtraction operations
     pub sub_lookup_elements: SubLookupElements,
 }
@@ -138,7 +199,7 @@ impl FrameworkEval for Eval {
             &[remainder],
         ));
         eval.add_to_relation(RelationEntry::new(
-            &self.intt_lookup_elements,
+            &self.ibutterfly_lookup_elements,
             E::EF::one(),
             &[b],
         ));
@@ -161,22 +222,11 @@ impl InteractionClaim {
 
     /// Generates the interaction trace for modular subtraction.
     ///
-    /// This method creates the interaction trace that connects the subtraction component
+    /// Creates the interaction trace that connects the subtraction component
     /// with the range check component through the lookup protocol.
-    ///
-    /// # Parameters
-    ///
-    /// - `trace`: The trace columns from the subtraction component
-    /// - `lookup_elements`: The lookup elements for range checking
-    ///
-    /// # Returns
-    ///
-    /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        rc_lookup_elements: &RCLookupElements,
-        intt_lookup_elements: &INTTLookupElements,
-        sub_lookup_elements: &SubLookupElements,
+        lookup_elements: &LookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
@@ -184,14 +234,14 @@ impl InteractionClaim {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
 
-        // Range check
+        // Range check for remainder values
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            // Get the remainder value from the trace (column 2)
+            // Get the remainder value from the trace (column 3)
             let result_packed = trace[3].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.rc.combine(&[result_packed]);
 
             // The numerator is 1 (we want to check that remainder is in the range)
             let numerator = PackedQM31::one();
@@ -199,31 +249,32 @@ impl InteractionClaim {
             col_gen.write_frac(vec_row, numerator, denom);
         }
         col_gen.finalize_col();
-        // Sub
+
+        // Subtraction lookup
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            // Get the remainder value from the trace (column 2)
+            // Get the remainder value from the trace (column 3)
             let result_packed = trace[3].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = sub_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.sub.combine(&[result_packed]);
 
-            // The numerator is 1 (we want to check that remainder is in the range)
+            // The numerator is -1 (we're producing a value)
             let numerator = -PackedQM31::one();
 
             col_gen.write_frac(vec_row, numerator, denom);
         }
         col_gen.finalize_col();
 
-        // Intt
+        // INTT lookup for operand b
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             let result_packed = trace[1].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = intt_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.ibutterfly.combine(&[result_packed]);
 
-            // The numerator is 1 (we want to check that remainder is in the range)
+            // The numerator is 1 (we're consuming a value)
             let numerator = PackedQM31::one();
 
             col_gen.write_frac(vec_row, numerator, denom);

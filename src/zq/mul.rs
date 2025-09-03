@@ -1,10 +1,11 @@
-//! # Modular Addition Component
+//! # Modular Multiplication Component
 //!
-//! This module implements STARK proof components for modular addition operations.
+//! This module implements STARK proof components for modular multiplication operations
+//! in the field Z_q where q = 12289.
 //!
-//! The modular addition operation computes (a + b) mod q, where q = 12289.
+//! The modular multiplication operation computes (a * b) mod q, where q = 12289.
 //! The operation is decomposed into:
-//! - a + b = quotient * q + remainder
+//! - a * b = quotient * q + remainder
 //! - where remainder ∈ [0, q)
 //!
 //! The component generates traces for the operands (a, b), quotient, and remainder,
@@ -15,8 +16,23 @@ use stwo_constraint_framework::RelationEntry;
 
 use crate::{big_air::relation::RCLookupElements, zq::Q};
 
-pub const MUL_COL: usize = 1;
-
+/// STARK proof component for modular multiplication operations.
+///
+/// This struct represents the constraint system for modular multiplication
+/// in the field Z_q. It contains the field elements that participate
+/// in the multiplication operation and provides methods for constraint evaluation.
+///
+/// # Type Parameters
+///
+/// - `E`: The evaluation context type that implements `EvalAtRow`
+/// - `E::F`: The field type for arithmetic operations
+///
+/// # Fields
+///
+/// - `a`: First operand for the multiplication operation
+/// - `b`: Second operand for the multiplication operation  
+/// - `q`: Quotient representing how many times q divides (a * b)
+/// - `r`: Remainder representing the final result (a * b) mod q
 #[derive(Debug, Clone)]
 pub struct MulMod<E: stwo_constraint_framework::EvalAtRow> {
     pub a: E::F,
@@ -26,17 +42,47 @@ pub struct MulMod<E: stwo_constraint_framework::EvalAtRow> {
 }
 
 impl<E: stwo_constraint_framework::EvalAtRow> MulMod<E> {
+    /// Creates a new modular multiplication constraint component.
+    ///
+    /// # Parameters
+    ///
+    /// - `a`: First operand for the multiplication operation
+    /// - `b`: Second operand for the multiplication operation
+    /// - `q`: Quotient representing how many times q divides (a * b)
+    /// - `r`: Remainder representing the final result (a * b) mod q
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `MulMod` instance with the specified field elements.
     pub fn new(a: E::F, b: E::F, q: E::F, r: E::F) -> Self {
         Self { a, b, q, r }
     }
 
+    /// Evaluates the modular multiplication constraints and establishes lookup relations.
+    ///
+    /// This function enforces the mathematical correctness of modular multiplication
+    /// and connects the result to the range checking system through lookup relations.
+    ///
+    /// # Parameters
+    ///
+    /// - `lookup_elements`: The range checking lookup elements for validation
+    /// - `eval`: The evaluation context for adding constraints and relations
+    ///
+    /// # Constraints Enforced
+    ///
+    /// 1. **Modular Arithmetic**: a * b = q * Q + r
+    ///    This ensures that the product equals the quotient times the field size plus the remainder
+    ///
+    /// 2. **Range Checking**: The remainder r is added to the range check lookup table
+    ///    This validates that r ∈ [0, Q) through the lookup protocol
     pub fn evaluate(self, lookup_elements: &RCLookupElements, eval: &mut E) {
-        // Extract trace values
+        // Enforce the modular arithmetic constraint: a * b = q * Q + r
+        // This ensures mathematical correctness of the modular multiplication
         eval.add_constraint(self.a * self.b - self.q * E::F::from(M31(Q)) - self.r.clone());
-        // Now we need to check that the remainder is in the range [0, Q)
-        // We do this by using the range check we defined. Here we increment the multiplicity of
-        // this value (remainder) by 1 because we want to range check it and the logup sum has to be exactly 0
-        // So here we increment and in the range_check we decrements
+
+        // Add the remainder to the range check lookup table
+        // This establishes the lookup relation for range checking validation
+        // The multiplicity is set to 1 since each remainder appears once in the trace
         eval.add_to_relation(RelationEntry::new(lookup_elements, E::EF::one(), &[self.r]));
     }
 }

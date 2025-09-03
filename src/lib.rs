@@ -1,33 +1,75 @@
 //! # Falcon-AIR
 //!
-//! A STARK proof system implementation for modular arithmetic operations in the field Z_q
-//! where q = 12 * 1024 + 1 = 12289.
+//! A comprehensive STARK proof system implementation for modular arithmetic operations
+//! in the field Z_q where q = 12 * 1024 + 1 = 12289.
 //!
-//! This crate provides components for:
-//! - Modular addition (a + b mod q)
-//! - Modular multiplication (a * b mod q)
-//! - Modular subtraction (a - b mod q)
-//! - Range checking (ensuring values are in [0, q))
+//! This crate provides a complete STARK proof system for cryptographic applications,
+//! particularly the Falcon signature scheme. It implements efficient proof generation
+//! for fundamental arithmetic operations with comprehensive range checking.
 //!
-//! The implementation uses the STWO framework for generating STARK proofs with
-//! efficient constraint evaluation and polynomial commitment schemes.
+//! # Core Components
+//!
+//! - **Modular Arithmetic**: Addition, multiplication, and subtraction modulo q
+//! - **Range Checking**: Ensures all values remain within the valid field range [0, q)
+//! - **NTT Operations**: Number Theoretic Transform for efficient polynomial operations
+//! - **STARK Proofs**: Zero-knowledge proofs of computational integrity
 
 pub mod big_air;
 pub mod debug;
 pub mod ntts;
 pub mod polys;
-pub mod relation_tracker;
 pub mod zq;
 
+/// Logarithm of the polynomial size used in NTT operations.
+///
+/// This constant determines the size of polynomials processed by the NTT:
+/// - POLY_SIZE = 2^POLY_LOG_SIZE = 2^10 = 1024
+/// - Used for efficient polynomial multiplication and evaluation
 pub const POLY_LOG_SIZE: u32 = 10;
+
+/// The polynomial size used in NTT operations.
+///
+/// This is the actual number of coefficients in each polynomial:
+/// - POLY_SIZE = 1024 coefficients
+/// - Must be a power of 2 for efficient NTT computation
+/// - Compatible with Falcon signature scheme requirements
 pub const POLY_SIZE: usize = 1 << POLY_LOG_SIZE;
+
+/// Precomputed signature bounds for different polynomial sizes.
+///
+/// These bounds are used to validate the Euclidean norm of signature polynomials
+/// during verification. Each bound corresponds to a polynomial size from 2^1 to 2^10.
+/// The bounds ensure cryptographic security by limiting signature sizes.
 pub const SIGNATURE_BOUNDS: [u32; 10] = [
     101498, 208714, 428865, 892039, 1852696, 3842630, 7959734, 16468416, 34034726, 70265242,
 ];
+
+/// The signature bound for the current polynomial size.
+///
+/// This is the maximum allowed Euclidean norm for signature polynomials
+/// with POLY_SIZE coefficients. It's extracted from SIGNATURE_BOUNDS
+/// based on POLY_LOG_SIZE.
 pub const SIGNATURE_BOUND: u32 = SIGNATURE_BOUNDS[POLY_LOG_SIZE as usize - 1];
+
+/// Lower 14 bits of the signature bound.
+///
+/// This represents the lower portion of the signature bound used for
+/// efficient range checking in the STARK proof system.
 pub const LOW_SIG_BOUND: u32 = SIGNATURE_BOUND & ((1 << 14) - 1);
+
+/// Upper bits of the signature bound (shifted right by 14).
+///
+/// This represents the upper portion of the signature bound used for
+/// efficient range checking in the STARK proof system.
 pub const HIGH_SIG_BOUND: u32 = SIGNATURE_BOUND >> 14;
 
+/// Input data module containing test vectors and constants for the Falcon signature scheme.
+///
+/// This module provides:
+/// - Test signature polynomial S1 for validation
+/// - Public key polynomial PK for verification
+/// - Message point polynomial for signature generation
+/// - All polynomials are defined over the field Z_q with 1024 coefficients
 pub mod input {
     use crate::POLY_SIZE;
 

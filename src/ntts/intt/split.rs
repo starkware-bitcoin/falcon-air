@@ -21,14 +21,6 @@ use crate::{
     zq::{add::AddMod, mul::MulMod, sub::SubMod},
 };
 
-/// Collection of split operations for INTT polynomial decomposition.
-///
-/// This struct holds a vector of split operations that will be evaluated
-/// together to decompose INTT results from larger polynomials into smaller
-/// subproblems for recursive computation.
-#[derive(Clone, Debug)]
-pub struct SplitNTT<E: stwo_constraint_framework::EvalAtRow>(pub Vec<Split<E>>);
-
 /// Single split operation for INTT polynomial decomposition.
 ///
 /// This struct represents one split operation that decomposes two coefficients
@@ -92,18 +84,8 @@ impl<E: stwo_constraint_framework::EvalAtRow> Split<E> {
         }
     }
 }
-impl<E: stwo_constraint_framework::EvalAtRow> Default for SplitNTT<E> {
-    /// Creates an empty collection of split operations.
-    ///
-    /// Returns a new `SplitNTT` instance with an empty vector of split operations.
-    /// This is typically used as a starting point for building up split operations
-    /// during the INTT computation.
-    fn default() -> Self {
-        Self(vec![])
-    }
-}
 
-impl<E: stwo_constraint_framework::EvalAtRow> SplitNTT<E> {
+impl<E: stwo_constraint_framework::EvalAtRow> Split<E> {
     /// Evaluates split operations for INTT polynomial decomposition.
     ///
     /// This function performs the split operations that decompose INTT results from larger
@@ -126,42 +108,28 @@ impl<E: stwo_constraint_framework::EvalAtRow> SplitNTT<E> {
     /// Returns a tuple containing two vectors of polynomial coefficients:
     /// - `f0`: Coefficients for the first smaller polynomial
     /// - `f1`: Coefficients for the second smaller polynomial
-    pub fn evaluate(
-        self,
-        lookup_elements: &RCLookupElements,
-        eval: &mut E,
-    ) -> (Vec<E::F>, Vec<E::F>) {
+    pub fn evaluate(self, lookup_elements: &RCLookupElements, eval: &mut E) -> [E::F; 2] {
         // Perform split butterfly operations on each pair of coefficients
-        let mut f0 = vec![];
-        let mut f1 = vec![];
-        for split in self.0.into_iter() {
-            // Step 1: Add even and odd coefficients and scale by I2
-            AddMod::evaluate(split.f_even_plus_f_odd, lookup_elements, eval);
-            f0.push(split.i2_times_f_even_plus_f_odd.r.clone());
-            MulMod::evaluate(split.i2_times_f_even_plus_f_odd, lookup_elements, eval);
+        let f = [
+            self.i2_times_f_even_plus_f_odd.r.clone(),
+            self.i2_times_f_even_minus_f_odd_times_root_inv.r.clone(),
+        ];
 
-            // Step 2: Subtract odd from even coefficients, scale by I2, and multiply by inverse root
-            SubMod::evaluate(split.f_even_minus_f_odd, lookup_elements, eval);
-            MulMod::evaluate(split.i2_times_f_even_minus_f_odd, lookup_elements, eval);
-            f1.push(split.i2_times_f_even_minus_f_odd_times_root_inv.r.clone());
-            MulMod::evaluate(
-                split.i2_times_f_even_minus_f_odd_times_root_inv,
-                lookup_elements,
-                eval,
-            );
-        }
-        (f0, f1)
-    }
+        // Step 1: Add even and odd coefficients and scale by I2
+        AddMod::evaluate(self.f_even_plus_f_odd, lookup_elements, eval);
 
-    /// Adds a split operation to the collection.
-    ///
-    /// This method adds a single split operation to the collection of split operations.
-    /// The split operation will be evaluated when `evaluate()` is called.
-    ///
-    /// # Arguments
-    ///
-    /// * `split` - The split operation to add to the collection
-    pub fn push(&mut self, split: Split<E>) {
-        self.0.push(split);
+        MulMod::evaluate(self.i2_times_f_even_plus_f_odd, lookup_elements, eval);
+
+        // Step 2: Subtract odd from even coefficients, scale by I2, and multiply by inverse root
+        SubMod::evaluate(self.f_even_minus_f_odd, lookup_elements, eval);
+        MulMod::evaluate(self.i2_times_f_even_minus_f_odd, lookup_elements, eval);
+
+        MulMod::evaluate(
+            self.i2_times_f_even_minus_f_odd_times_root_inv,
+            lookup_elements,
+            eval,
+        );
+
+        f
     }
 }

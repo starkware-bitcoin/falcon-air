@@ -15,18 +15,22 @@
 //!   f_ntt[2*i+1] = (f0_ntt[i] - root[i] * f1_ntt[i]) % q
 //!
 //! where root[i] is the appropriate root of unity for the current merge level.
+//!
+//! # Mathematical Foundation
+//!
+//! The merge operation implements the Cooley-Tukey butterfly pattern used in FFT/NTT algorithms.
+//! Given two polynomials f0_ntt and f1_ntt of size n/2, and a root of unity ω, the merge
+//! produces a polynomial of size n by computing:
+//!
+//! f_ntt[2*i] = f0_ntt[i] + ω^i * f1_ntt[i]
+//! f_ntt[2*i+1] = f0_ntt[i] - ω^i * f1_ntt[i]
+//!
+//! This operation preserves the NTT property and allows recursive construction
+//! of larger polynomial evaluations from smaller ones.
 use crate::{
     big_air::relation::RCLookupElements,
     zq::{add::AddMod, mul::MulMod, sub::SubMod},
 };
-
-/// Collection of merge operations for NTT polynomial combination.
-///
-/// This struct holds a vector of merge operations that will be evaluated
-/// together to combine NTT results from smaller subproblems into larger
-/// polynomial evaluations.
-#[derive(Clone, Debug)]
-pub struct MergeNTT<E: stwo_constraint_framework::EvalAtRow>(pub Vec<Merge<E>>);
 
 /// Single merge operation for NTT polynomial combination.
 ///
@@ -39,7 +43,8 @@ pub struct MergeNTT<E: stwo_constraint_framework::EvalAtRow>(pub Vec<Merge<E>>);
 /// 2. Addition of f0_ntt and the multiplied result
 /// 3. Subtraction of the multiplied result from f0_ntt
 ///
-/// Each operation includes modular arithmetic components for range checking.
+/// Each operation includes modular arithmetic components for range checking
+/// to ensure all intermediate values remain within field bounds [0, Q).
 #[derive(Clone, Debug)]
 pub struct Merge<E: stwo_constraint_framework::EvalAtRow> {
     /// Multiplication operation: f1_ntt[i] * root[i] with modular arithmetic components
@@ -77,18 +82,8 @@ impl<E: stwo_constraint_framework::EvalAtRow> Merge<E> {
         }
     }
 }
-impl<E: stwo_constraint_framework::EvalAtRow> Default for MergeNTT<E> {
-    /// Creates an empty collection of merge operations.
-    ///
-    /// Returns a new `MergeNTT` instance with an empty vector of merge operations.
-    /// This is typically used as a starting point for building up merge operations
-    /// during the NTT computation.
-    fn default() -> Self {
-        Self(vec![])
-    }
-}
 
-impl<E: stwo_constraint_framework::EvalAtRow> MergeNTT<E> {
+impl<E: stwo_constraint_framework::EvalAtRow> Merge<E> {
     /// Evaluates merge operations for NTT polynomial combination.
     ///
     /// This function performs the merge operations that combine NTT results from smaller
@@ -108,35 +103,26 @@ impl<E: stwo_constraint_framework::EvalAtRow> MergeNTT<E> {
     ///
     /// # Returns
     ///
-    /// Returns a vector of merged polynomial coefficients from the NTT computation
-    pub fn evaluate(self, lookup_elements: &RCLookupElements, eval: &mut E) -> Vec<E::F> {
+    /// Returns a vector of merged polynomial coefficients from the NTT computation.
+    /// The coefficients are in evaluation form and ready for the next NTT level.
+    pub fn evaluate(self, lookup_elements: &RCLookupElements, eval: &mut E) -> [E::F; 2] {
         // Perform merge butterfly operations on each pair of coefficients
-        let mut result = vec![];
-        for merge in self.0.into_iter() {
-            // Step 1: Compute f1_ntt[i] * root[i] using modular multiplication
-            // where root[i] is the i-th root of unity for this merge level
-            MulMod::evaluate(merge.root_times_f1, lookup_elements, eval);
 
-            result.push(merge.f0_plus_root_times_f1.r.clone());
-            // Step 2a: Merge butterfly operation - compute f_ntt[2*i] = (f0_ntt[i] + root[i]*f1_ntt[i]) % q
-            AddMod::evaluate(merge.f0_plus_root_times_f1, lookup_elements, eval);
+        let result = [
+            self.f0_plus_root_times_f1.r.clone(),
+            self.f0_minus_root_times_f1.r.clone(),
+        ];
+        // Step 1: Compute f1_ntt[i] * root[i] using modular multiplication
+        // where root[i] is the i-th root of unity for this merge level
+        MulMod::evaluate(self.root_times_f1, lookup_elements, eval);
 
-            // Step 2b: Merge butterfly operation - compute f_ntt[2*i+1] = (f0_ntt[i] - root[i]*f1_ntt[i]) % q
-            result.push(merge.f0_minus_root_times_f1.r.clone());
-            SubMod::evaluate(merge.f0_minus_root_times_f1, lookup_elements, eval);
-        }
+        // Step 2a: Merge butterfly operation - compute f_ntt[2*i] = (f0_ntt[i] + root[i]*f1_ntt[i]) % q
+        AddMod::evaluate(self.f0_plus_root_times_f1, lookup_elements, eval);
+
+        // Step 2b: Merge butterfly operation - compute f_ntt[2*i+1] = (f0_ntt[i] - root[i]*f1_ntt[i]) % q
+
+        SubMod::evaluate(self.f0_minus_root_times_f1, lookup_elements, eval);
+
         result
-    }
-
-    /// Adds a merge operation to the collection.
-    ///
-    /// This method adds a single merge operation to the collection of merge operations.
-    /// The merge operation will be evaluated when `evaluate()` is called.
-    ///
-    /// # Arguments
-    ///
-    /// * `merge` - The merge operation to add to the collection
-    pub fn push(&mut self, merge: Merge<E>) {
-        self.0.push(merge);
     }
 }

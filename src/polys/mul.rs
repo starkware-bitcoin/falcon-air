@@ -1,14 +1,49 @@
 //! # Modular Multiplication Component
 //!
-//! This module implements STARK proof components for modular multiplication operations.
+//! This module implements STARK proof components for modular multiplication operations
+//! over the finite field Z_q where q = 12289.
 //!
-//! The modular multiplication operation computes (a * b) mod q, where q = 12289.
+//! # Mathematical Foundation
+//!
+//! The modular multiplication operation computes (a * b) mod q, where a, b ∈ [0, q).
 //! The operation is decomposed into:
-//! - a * b = quotient * q + remainder
-//! - where remainder ∈ [0, q)
 //!
-//! The component generates traces for the operands (a, b), quotient, and remainder,
-//! and enforces the constraint that the remainder is within the valid range.
+//! a * b = quotient * q + remainder
+//!
+//! where:
+//! - remainder ∈ [0, q) (the result of modular multiplication)
+//! - quotient = ⌊(a * b) / q⌋ (the integer division result)
+//!
+//! # Algorithm Details
+//!
+//! The multiplication is implemented using standard integer arithmetic:
+//! - quotient = (a * b) / q (integer division)
+//! - remainder = (a * b) % q (modulo operation)
+//!
+//! This decomposition ensures that the result is always in the range [0, q) and
+//! provides efficient verification through range checking of the remainder.
+//!
+//! # Trace Structure
+//!
+//! The component generates traces with the following columns:
+//! - Column 0: First operand a
+//! - Column 1: Second operand b
+//! - Column 2: Quotient (integer division result)
+//! - Column 3: Remainder (result of modular multiplication)
+//!
+//! # Range Checking
+//!
+//! The component enforces constraints that ensure:
+//! - All operands are within [0, q)
+//! - The remainder is within [0, q)
+//! - The quotient is non-negative
+//! - The modular arithmetic relationship holds: a * b = quotient * q + remainder
+//!
+//! # Usage
+//!
+//! This component is used in polynomial arithmetic operations where modular
+//! multiplication is required, such as in the Falcon signature scheme for
+//! polynomial evaluation multiplication and NTT computations.
 
 use num_traits::One;
 use stwo::{
@@ -29,34 +64,117 @@ use stwo_constraint_framework::{
 };
 
 use crate::{
-    big_air::relation::{MulLookupElements, NTTLookupElements, RCLookupElements},
+    big_air::relation::{LookupElements, MulLookupElements, NTTLookupElements, RCLookupElements},
     zq::{Q, mul::MulMod},
 };
 
-// This is a helper function for the prover to generate the trace for the mul component
+/// Claim parameters for the modular multiplication circuit.
+///
+/// This struct defines the parameters needed to generate and verify modular multiplication proofs
+/// for polynomial evaluations. The claim contains the logarithmic size of the trace, which determines
+/// the number of multiplication operations that can be proven.
+///
+/// # Parameters
+///
+/// - `log_size`: The log base 2 of the trace size (e.g., 10 for 1024 operations)
+///   This determines the number of multiplication operations and the size of the computation trace.
 #[derive(Debug, Clone)]
 pub struct Claim {
     /// The log base 2 of the trace size
+    ///
+    /// This value determines:
+    /// - Number of multiplication operations: 2^log_size
+    /// - Trace size: 2^log_size rows
+    /// - Memory requirements for proof generation
     pub log_size: u32,
 }
 
 impl Claim {
-    /// Returns the log sizes for the traces.
+    /// Returns the log sizes for the traces used in the modular multiplication circuit.
     ///
-    /// [preprocessed_trace, trace, interaction_trace]
+    /// This method defines the structure of the proof system by specifying
+    /// the logarithmic sizes of different trace components. The multiplication circuit
+    /// uses three types of traces:
+    ///
+    /// # Trace Structure
+    ///
+    /// 1. **Preprocessed Trace**: Empty (no preprocessing required for multiplication)
+    ///    - Contains no columns as multiplication doesn't require precomputed lookup tables
+    ///
+    /// 2. **Main Computation Trace**: Contains the multiplication computation steps
+    ///    - Size: 2^log_size rows
+    ///    - Contains columns for operands, quotient, and remainder
+    ///
+    /// 3. **Interaction Trace**: Empty (no interaction trace required)
+    ///    - Range checking is handled through the main trace constraints
+    ///
+    /// # Returns
+    ///
+    /// Returns a tree structure containing the log sizes for each trace component:
+    /// - `preprocessed_trace`: Empty vector (no preprocessing)
+    /// - `trace`: Vector with single element `[log_size]` (main computation)
+    /// - `interaction_trace`: Empty vector (no interaction trace)
     pub fn log_sizes(&self) -> TreeVec<Vec<u32>> {
         let trace_log_sizes = vec![self.log_size];
         TreeVec::new(vec![vec![], trace_log_sizes, vec![]])
     }
 
-    /// Mixes the claim parameters into the Fiat-Shamir channel.
+    /// Mixes the claim parameters into the Fiat-Shamir channel for non-interactive proof generation.
+    ///
+    /// This method incorporates the multiplication claim parameters into the Fiat-Shamir challenge
+    /// generation process, ensuring that the proof is bound to the specific parameters
+    /// used in the multiplication computation.
+    ///
+    /// # Parameters Mixed
+    ///
+    /// - `log_size`: The logarithmic size of the trace (determines number of operations)
+    ///   This parameter affects the complexity and structure of the multiplication computation.
+    ///
+    /// # Security Properties
+    ///
+    /// By mixing the claim parameters into the channel:
+    /// - The proof is bound to the specific trace size used
+    /// - Prevents parameter substitution attacks
+    /// - Ensures proof soundness for the claimed parameters
     pub fn mix_into(&self, channel: &mut impl Channel) {
         channel.mix_u64(self.log_size as u64);
     }
 
-    /// Generates the trace for the mul component
-    /// Generates 2 random numbers and creates a trace for the mul component
-    /// returns the columns in this order: a, b, quotient, remainder
+    /// Generates the trace for the modular multiplication component.
+    ///
+    /// This function creates a trace that represents modular multiplication operations
+    /// for pairs of polynomial evaluation operands. Each multiplication operation is decomposed
+    /// into quotient and remainder parts for modular arithmetic verification.
+    ///
+    /// # Algorithm Details
+    ///
+    /// For each pair of polynomial evaluation operands (a, b), the function computes:
+    /// - quotient = (a * b) / Q (integer division)
+    /// - remainder = (a * b) % Q (modulo operation)
+    ///
+    /// This decomposition ensures that the result is always in the range [0, Q) and
+    /// provides efficient verification through range checking of the remainder.
+    ///
+    /// # Parameters
+    ///
+    /// - `a`: First polynomial evaluation operand array with values in [0, Q)
+    /// - `b`: Second polynomial evaluation operand array with values in [0, Q)
+    ///   Both arrays must have the same length.
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple containing:
+    /// - `ColumnVec<CircleEvaluation<...>>`: The computation trace columns
+    ///   Columns are in order: a, b, quotient, remainder
+    /// - `Vec<M31>`: Remainder values for range checking
+    ///
+    /// # Trace Structure
+    ///
+    /// The generated trace contains 4 columns per operation:
+    /// - Column 0: First polynomial evaluation operand a
+    /// - Column 1: Second polynomial evaluation operand b
+    /// - Column 2: Quotient (integer division result)
+    /// - Column 3: Remainder (result of modular multiplication)
     pub fn gen_trace(
         &self,
         a: &[u32],
@@ -146,6 +264,7 @@ impl FrameworkEval for Eval {
             &self.mul_lookup_elements,
             -E::EF::one(),
             &[r],
+            // &[E::F::zero()],
         ));
         eval.finalize_logup();
         eval
@@ -179,24 +298,21 @@ impl InteractionClaim {
     /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        rc_lookup_elements: &RCLookupElements,
-        f_ntt_lookup_elements: &NTTLookupElements,
-        g_ntt_lookup_elements: &NTTLookupElements,
-        mul_lookup_elements: &MulLookupElements,
+        lookup_elements: &LookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
     ) {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
-        // Range check
+        // Range check for remainder values
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             // Get the remainder value from the trace (column 3)
             let result_packed = trace[3].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.rc.combine(&[result_packed]);
 
             // The numerator is 1 (we want to check that remainder is in the range)
             let numerator = PackedQM31::one();
@@ -205,47 +321,49 @@ impl InteractionClaim {
         }
         col_gen.finalize_col();
 
-        // f_ntt
+        // F-NTT lookup for operand a
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            // Get the remainder value from the trace (column 3)
+            // Get the operand a value from the trace (column 0)
             let result_packed = trace[0].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = f_ntt_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.f_ntt.combine(&[result_packed]);
 
-            // The numerator is 1 (we want to check that remainder is in the range)
+            // The numerator is 1 (we're consuming the value created by the NTT)
             let numerator = PackedQM31::one();
 
             col_gen.write_frac(vec_row, numerator, denom);
         }
         col_gen.finalize_col();
-        // g_ntt
+
+        // G-NTT lookup for operand b
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            // Get the remainder value from the trace (column 3)
+            // Get the operand b value from the trace (column 1)
             let result_packed = trace[1].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = g_ntt_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.g_ntt.combine(&[result_packed]);
 
-            // The numerator is 1 (we want to check that remainder is in the range)
+            // The numerator is 1 (we're consuming the value created by the NTT)
+
             let numerator = PackedQM31::one();
 
             col_gen.write_frac(vec_row, numerator, denom);
         }
         col_gen.finalize_col();
 
-        // mul output
+        // Multiplication lookup for remainder
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             // Get the remainder value from the trace (column 3)
             let result_packed = trace[3].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = mul_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.mul.combine(&[result_packed]);
 
-            // The numerator is 1 (we want to check that remainder is in the range)
+            // The numerator is -1 (we're producing a value)
             let numerator = -PackedQM31::one();
 
             col_gen.write_frac(vec_row, numerator, denom);

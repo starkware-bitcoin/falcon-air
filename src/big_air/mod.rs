@@ -14,17 +14,17 @@
 //!
 pub mod claim;
 pub mod interaction_claim;
+pub mod macros;
 pub mod relation;
 
 use crate::{
-    HIGH_SIG_BOUND, LOW_SIG_BOUND, POLY_LOG_SIZE, POLY_SIZE,
+    POLY_SIZE,
     big_air::{claim::BigClaim, interaction_claim::BigInteractionClaim, relation::LookupElements},
-    ntts::{intt, ntt},
-    polys::{euclidean_norm, mul, sub},
-    zq::{Q, range_check},
+    zq::Q,
 };
+
 use num_traits::Zero;
-use stwo::core::fields::qm31::QM31;
+use stwo::{core::fields::qm31::QM31, prover::ComponentProver};
 
 use stwo::{
     core::{
@@ -84,48 +84,13 @@ pub fn prove_falcon(
     let mut commitment_scheme =
         CommitmentSchemeProver::<SimdBackend, Blake2sMerkleChannel>::new(pcs_config, &twiddles);
     let mut tree_builder = commitment_scheme.tree_builder();
-    let range_check_preprocessed = range_check::RangeCheck::<Q>::gen_column_simd();
-    let half_range_check_preprocessed = range_check::RangeCheck::<{ Q / 2 }>::gen_column_simd();
+    let (preprocessed_columns, preprocessed_columns_ids) = BigClaim::create_preprocessed_columns();
 
-    let low_sig_bound_check_preprocessed =
-        range_check::RangeCheck::<LOW_SIG_BOUND>::gen_column_simd();
-    let high_sig_bound_check_preprocessed =
-        range_check::RangeCheck::<HIGH_SIG_BOUND>::gen_column_simd();
-    tree_builder.extend_evals([
-        range_check_preprocessed,
-        half_range_check_preprocessed,
-        low_sig_bound_check_preprocessed,
-        high_sig_bound_check_preprocessed,
-    ]);
+    tree_builder.extend_evals(preprocessed_columns);
     tree_builder.commit(channel);
 
     // Generate and commit to main traces
-    let claim = BigClaim {
-        f_ntt: ntt::Claim { log_size: 4 },
-        g_ntt: ntt::Claim { log_size: 4 },
-        mul: mul::Claim {
-            log_size: POLY_LOG_SIZE,
-        },
-        intt: intt::Claim { log_size: 4 },
-        sub: sub::Claim {
-            log_size: POLY_LOG_SIZE,
-        },
-        euclidean_norm: euclidean_norm::Claim {
-            log_size: POLY_LOG_SIZE,
-        },
-        half_range_check: range_check::Claim {
-            log_size: range_check_log_size - 1,
-        },
-        low_sig_bound_check: range_check::Claim {
-            log_size: LOW_SIG_BOUND.next_power_of_two().ilog2(),
-        },
-        high_sig_bound_check: range_check::Claim {
-            log_size: HIGH_SIG_BOUND.next_power_of_two().ilog2(),
-        },
-        range_check: range_check::Claim {
-            log_size: range_check_log_size,
-        },
-    };
+    let claim = BigClaim::new_standard();
     let (trace, traces) = claim.gen_trace(s1, pk, msg_point);
     claim.mix_into(channel);
 
@@ -140,20 +105,9 @@ pub fn prove_falcon(
     let lookup_elements = LookupElements::draw(channel);
 
     // Generate and commit to interaction traces
-    let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
-        &lookup_elements,
-        &traces.f_ntt,
-        &traces.g_ntt,
-        &traces.mul,
-        &traces.intt,
-        &traces.sub,
-        &traces.euclidean_norm,
-        &traces.half_range_check,
-        &traces.low_sig_bound_check,
-        &traces.high_sig_bound_check,
-        &traces.range_check,
-    );
-    drop(traces);
+    let (interaction_trace, interaction_claim) =
+        BigInteractionClaim::gen_interaction_trace(&lookup_elements, &traces);
+
     interaction_claim.mix_into(channel);
 
     let mut tree_builder = commitment_scheme.tree_builder();
@@ -161,125 +115,66 @@ pub fn prove_falcon(
     tree_builder.commit(channel);
 
     // Set up trace location allocator with preprocessed columns
-    let mut tree_span_provider = TraceLocationAllocator::new_with_preproccessed_columns(&[
-        range_check::RangeCheck::<Q>::id(),
-        range_check::RangeCheck::<{ Q / 2 }>::id(),
-        range_check::RangeCheck::<LOW_SIG_BOUND>::id(),
-        range_check::RangeCheck::<HIGH_SIG_BOUND>::id(),
-    ]);
+    let mut tree_span_provider =
+        TraceLocationAllocator::new_with_preproccessed_columns(&preprocessed_columns_ids);
 
-    let f_ntt_component = ntt::Component::new(
+    let (
+        f_ntt_butterfly_component,
+        f_ntt_merges_components,
+        g_ntt_butterfly_component,
+        g_ntt_merges_components,
+    ) = BigClaim::create_ntt_components(
+        &claim,
+        &lookup_elements,
+        &interaction_claim,
         &mut tree_span_provider,
-        ntt::Eval {
-            claim: claim.f_ntt,
-            rc_lookup_elements: lookup_elements.rc.clone(),
-            ntt_lookup_elements: lookup_elements.f_ntt.clone(),
-        },
-        interaction_claim.f_ntt.claimed_sum,
     );
-    let g_ntt_component = ntt::Component::new(
+    let (
+        mul_component,
+        intt_merges_components,
+        ibutterfly_component,
+        sub_component,
+        euclidean_norm_component,
+        half_range_check_component,
+        low_sig_bound_check_component,
+        high_sig_bound_check_component,
+        range_check_component,
+        roots_components,
+        inv_roots_components,
+    ) = BigClaim::create_remaining_components(
+        &claim,
+        &lookup_elements,
+        &interaction_claim,
         &mut tree_span_provider,
-        ntt::Eval {
-            claim: claim.g_ntt,
-            rc_lookup_elements: lookup_elements.rc.clone(),
-            ntt_lookup_elements: lookup_elements.g_ntt.clone(),
-        },
-        interaction_claim.g_ntt.claimed_sum,
-    );
-    let mul_component = mul::Component::new(
-        &mut tree_span_provider,
-        mul::Eval {
-            claim: claim.mul,
-            rc_lookup_elements: lookup_elements.rc.clone(),
-            f_ntt_lookup_elements: lookup_elements.f_ntt.clone(),
-            g_ntt_lookup_elements: lookup_elements.g_ntt.clone(),
-            mul_lookup_elements: lookup_elements.mul.clone(),
-        },
-        interaction_claim.mul.claimed_sum,
-    );
-    let intt_component = intt::Component::new(
-        &mut tree_span_provider,
-        intt::Eval {
-            claim: claim.intt,
-            rc_lookup_elements: lookup_elements.rc.clone(),
-            mul_lookup_elements: lookup_elements.mul.clone(),
-            intt_lookup_elements: lookup_elements.intt.clone(),
-        },
-        interaction_claim.intt.claimed_sum,
-    );
-    let sub_component = sub::Component::new(
-        &mut tree_span_provider,
-        sub::Eval {
-            claim: claim.sub,
-            rc_lookup_elements: lookup_elements.rc.clone(),
-            intt_lookup_elements: lookup_elements.intt.clone(),
-            sub_lookup_elements: lookup_elements.sub.clone(),
-        },
-        interaction_claim.sub.claimed_sum,
-    );
-    let euclidean_norm_component = euclidean_norm::Component::new(
-        &mut tree_span_provider,
-        euclidean_norm::Eval {
-            claim: claim.euclidean_norm,
-            half_rc_lookup_elements: lookup_elements.half_range_check.clone(),
-            s0_lookup_elements: lookup_elements.sub.clone(),
-            low_sig_bound_check_lookup_elements: lookup_elements.low_sig_bound_check.clone(),
-            high_sig_bound_check_lookup_elements: lookup_elements.high_sig_bound_check.clone(),
-        },
-        interaction_claim.euclidean_norm.claimed_sum,
-    );
-    let half_range_check_component = range_check::Component::new(
-        &mut tree_span_provider,
-        range_check::Eval::<{ Q / 2 }> {
-            claim: claim.half_range_check,
-            lookup_elements: lookup_elements.half_range_check.clone(),
-        },
-        interaction_claim.half_range_check.claimed_sum,
-    );
-    let low_sig_bound_check_component = range_check::Component::new(
-        &mut tree_span_provider,
-        range_check::Eval::<LOW_SIG_BOUND> {
-            claim: claim.low_sig_bound_check,
-            lookup_elements: lookup_elements.low_sig_bound_check.clone(),
-        },
-        interaction_claim.low_sig_bound_check.claimed_sum,
-    );
-    let high_sig_bound_check_component = range_check::Component::new(
-        &mut tree_span_provider,
-        range_check::Eval::<HIGH_SIG_BOUND> {
-            claim: claim.high_sig_bound_check,
-            lookup_elements: lookup_elements.high_sig_bound_check.clone(),
-        },
-        interaction_claim.high_sig_bound_check.claimed_sum,
-    );
-    let range_check_component = range_check::Component::new(
-        &mut tree_span_provider,
-        range_check::Eval::<Q> {
-            claim: claim.range_check,
-            lookup_elements: lookup_elements.rc.clone(),
-        },
-        interaction_claim.range_check.claimed_sum,
     );
 
     #[cfg(test)]
     {
-        use crate::relation_tracker::{BigAirComponents, track_and_summarize_big_air_relations};
+        use crate::debug::relation_tracker::{
+            BigAirComponents, track_and_summarize_big_air_relations,
+        };
+
         let components = &BigAirComponents {
-            f_ntt: &f_ntt_component,
-            g_ntt: &g_ntt_component,
+            f_ntt_butterfly: &f_ntt_butterfly_component,
+            f_ntt_merges: &f_ntt_merges_components,
+            g_ntt_butterfly: &g_ntt_butterfly_component,
+            g_ntt_merges: &g_ntt_merges_components,
             mul: &mul_component,
-            intt: &intt_component,
+            intt_merges: &intt_merges_components,
+            ibutterfly: &ibutterfly_component,
             sub: &sub_component,
             euclidean_norm: &euclidean_norm_component,
             half_range_check: &half_range_check_component,
             low_sig_bound_check: &low_sig_bound_check_component,
             high_sig_bound_check: &high_sig_bound_check_component,
             range_check: &range_check_component,
+            roots: &roots_components,
+            inv_roots: &inv_roots_components,
         };
-        println!(
-            "summary: {:?}",
-            track_and_summarize_big_air_relations(&commitment_scheme, components)
-        );
+        let summary = track_and_summarize_big_air_relations(&commitment_scheme, components);
+        std::fs::write("summary.txt", format!("{:?}", summary)).unwrap();
+
+        // println!("summary: {:?}", summary);
     }
     assert_eq!(
         interaction_claim.claimed_sum(),
@@ -287,24 +182,36 @@ pub fn prove_falcon(
         "invalid logup sum"
     );
 
+    let mut components: Vec<&dyn ComponentProver<SimdBackend>> = vec![];
+    components.push(&f_ntt_butterfly_component);
+    for merge in f_ntt_merges_components.iter() {
+        components.push(merge);
+    }
+    components.push(&g_ntt_butterfly_component);
+    for merge in g_ntt_merges_components.iter() {
+        components.push(merge);
+    }
+    components.push(&mul_component);
+    for merge in intt_merges_components.iter() {
+        components.push(merge);
+    }
+    components.push(&ibutterfly_component);
+    components.push(&sub_component);
+    components.push(&euclidean_norm_component);
+    components.push(&half_range_check_component);
+    components.push(&low_sig_bound_check_component);
+    components.push(&high_sig_bound_check_component);
+    components.push(&range_check_component);
+
+    for root in roots_components.iter() {
+        components.push(root);
+    }
+    for inv_root in inv_roots_components.iter() {
+        components.push(inv_root);
+    }
+
     // Generate the final STARK proof
-    prove::<SimdBackend, _>(
-        &[
-            &f_ntt_component,
-            &g_ntt_component,
-            &mul_component,
-            &intt_component,
-            &sub_component,
-            &euclidean_norm_component,
-            &half_range_check_component,
-            &low_sig_bound_check_component,
-            &high_sig_bound_check_component,
-            &range_check_component,
-        ],
-        channel,
-        commitment_scheme,
-    )
-    // Err(ProvingError::ConstraintsNotSatisfied)
+    prove::<SimdBackend, _>(&components, channel, commitment_scheme)
 }
 
 #[cfg(test)]
