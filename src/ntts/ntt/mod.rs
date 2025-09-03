@@ -109,7 +109,7 @@ impl Claim {
         // Prepare data structures for the merging phase
 
         let mut output_polys = Vec::with_capacity(input_polys.len() / 2);
-        let mut trace = vec![vec![]; 11];
+        let mut trace = vec![vec![]; 12];
         let mut remainders = vec![];
         let mut js = vec![];
         // Phase 2: Recursive Merging Operations
@@ -126,6 +126,8 @@ impl Claim {
         // The roots of unity (w[2 * i]) are precomputed and stored in ROOTS[i][2 * j]
         // Each level doubles the polynomial size until we reach the final evaluation form
         trace[0] = vec![0; 1 << self.log_size];
+        trace[1] = vec![0; 1 << self.log_size];
+        trace[0][0] = 1;
         let mut row = 0;
         for coeffs in input_polys.chunks_exact(2) {
             let left = &coeffs[0]; // f0_ntt polynomial
@@ -139,29 +141,32 @@ impl Claim {
                 let j = 2 * j;
                 let root = ROOTS[stage][j];
                 js.push(j as u32);
-                trace[0][row] = 1;
+                trace[1][row] = 1;
+                if j == 0 {
+                    trace[0][row] = 1;
+                }
                 row += 1;
-                trace[1].push(j as u32);
-                trace[2].push(root);
+                trace[2].push(j as u32);
+                trace[3].push(root);
 
-                trace[3].push(*coeff_left);
-                trace[4].push(*coeff_right);
+                trace[4].push(*coeff_left);
+                trace[5].push(*coeff_right);
 
                 // Step 1: Multiply f1_ntt coefficient by root of unity
                 // f1_ntt[i] * w[2 * i] = quotient * Q + remainder
                 let root_times_f1_quotient = (*coeff_right * root) / Q;
                 let root_times_f1_remainder = (*coeff_right * root) % Q;
 
-                trace[5].push(root_times_f1_quotient);
-                trace[6].push(root_times_f1_remainder);
+                trace[6].push(root_times_f1_quotient);
+                trace[7].push(root_times_f1_remainder);
 
                 // Step 2: Add f0_ntt coefficient to the multiplied result
                 // f0_ntt[i] + f1_ntt[i] * w[2 * i] = quotient * Q + remainder
                 let f0_plus_root_times_f1_quotient = (*coeff_left + root_times_f1_remainder) / Q;
                 let f0_plus_root_times_f1_remainder = (*coeff_left + root_times_f1_remainder) % Q;
 
-                trace[7].push(f0_plus_root_times_f1_quotient);
-                trace[8].push(f0_plus_root_times_f1_remainder);
+                trace[8].push(f0_plus_root_times_f1_quotient);
+                trace[9].push(f0_plus_root_times_f1_remainder);
 
                 // Step 3: Subtract the multiplied result from f0_ntt coefficient
                 // f0_ntt[i] - f1_ntt[i] * w[2 * i] = quotient * Q + remainder (with borrow handling)
@@ -169,8 +174,8 @@ impl Claim {
                 let f0_minus_root_times_f1_remainder =
                     (*coeff_left + f0_minus_root_times_f1_borrow * Q - root_times_f1_remainder) % Q;
 
-                trace[9].push(f0_minus_root_times_f1_borrow);
-                trace[10].push(f0_minus_root_times_f1_remainder);
+                trace[10].push(f0_minus_root_times_f1_borrow);
+                trace[11].push(f0_minus_root_times_f1_remainder);
 
                 // Store the results for the next recursive level
                 merged_poly.push(f0_plus_root_times_f1_remainder);
@@ -185,9 +190,9 @@ impl Claim {
             .map(|col| col.into_iter().map(M31).collect_vec())
             .collect_vec();
 
-        remainders.extend(trace[6].clone());
-        remainders.extend(trace[8].clone());
-        remainders.extend(trace[10].clone());
+        remainders.extend(trace[7].clone());
+        remainders.extend(trace[9].clone());
+        remainders.extend(trace[11].clone());
 
         // Convert the trace values to circle evaluations for the proof system
         let domain = CanonicCoset::new(self.log_size).circle_domain();
@@ -256,6 +261,7 @@ impl FrameworkEval for Eval {
     /// 3. Verifies all modular arithmetic operations through range checking
     fn evaluate<E: stwo_constraint_framework::EvalAtRow>(&self, mut eval: E) -> E {
         // Extract the filled mask that indicates which positions contain valid data
+        let is_first_coeff = eval.next_trace_mask();
         let is_filled = eval.next_trace_mask();
         // Initialize collection of merge operations for this NTT level
 
@@ -265,6 +271,11 @@ impl FrameworkEval for Eval {
         // Extract the left coefficient from the trace
         let coeff_left = eval.next_trace_mask();
         let coeff_right = eval.next_trace_mask();
+
+        eval.add_constraint(is_first_coeff.clone() * (is_first_coeff.clone() - E::F::one()));
+        eval.add_constraint(is_filled.clone() * (is_filled.clone() - E::F::one()));
+
+        eval.add_constraint(is_first_coeff * j.clone());
 
         eval.add_to_relation(RelationEntry::new(
             &self.roots_lookup_elements,
@@ -393,18 +404,18 @@ impl InteractionClaim {
     ) {
         let log_size = trace[0].domain.log_size();
         let mut logup_gen = LogupTraceGenerator::new(log_size);
-        let is_filled = trace[0].clone();
+        let is_filled = trace[1].clone();
 
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
-            let j = trace[1].data[vec_row]; // must have all lanes populated
-            let root = trace[2].data[vec_row]; // must have all lanes populated
+            let j = trace[2].data[vec_row]; // must have all lanes populated
+            let root = trace[3].data[vec_row]; // must have all lanes populated
             let denom: PackedQM31 = roots_lookup_elements.combine(&[j, root]);
             col_gen.write_frac(vec_row, PackedQM31::from(is_filled.data[vec_row]), denom);
         }
         col_gen.finalize_col();
 
-        for col_offset in [3, 4] {
+        for col_offset in [4, 5] {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 let v = trace[col_offset].data[vec_row]; // must have all lanes populated
@@ -414,7 +425,7 @@ impl InteractionClaim {
             col_gen.finalize_col();
         }
 
-        for col_offset in [6, 8, 10] {
+        for col_offset in [7, 9, 11] {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 let v = trace[col_offset].data[vec_row]; // must have all lanes populated
@@ -424,7 +435,7 @@ impl InteractionClaim {
             col_gen.finalize_col();
         }
 
-        for col_offset in [8, 10] {
+        for col_offset in [9, 11] {
             let mut col_gen = logup_gen.new_col();
             for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
                 let v = trace[col_offset].data[vec_row]; // must have all lanes populated
