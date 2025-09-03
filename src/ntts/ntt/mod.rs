@@ -45,10 +45,7 @@ use crate::{
     big_air::relation::{
         InputLookupElements, NTTLookupElements, RCLookupElements, RootsLookupElements,
     },
-    ntts::{
-        ROOTS,
-        ntt::merge::{Merge, MergeNTT},
-    },
+    ntts::{ROOTS, ntt::merge::Merge},
     zq::{Q, add::AddMod, mul::MulMod, sub::SubMod},
 };
 
@@ -261,7 +258,6 @@ impl FrameworkEval for Eval {
         // Extract the filled mask that indicates which positions contain valid data
         let is_filled = eval.next_trace_mask();
         // Initialize collection of merge operations for this NTT level
-        let mut merges = MergeNTT::default();
 
         // Get the j-th root of unity for this polynomial size level
         let j = eval.next_trace_mask();
@@ -318,22 +314,25 @@ impl FrameworkEval for Eval {
         );
         // Create a merge operation combining all three arithmetic steps
         // This represents one complete butterfly operation for this coefficient pair
-        let merge = Merge::new(root_times_f1, f0_plus_root_times_f1, f0_minus_root_times_f1);
-        merges.push(merge);
 
         // Evaluate all merge operations and collect the merged polynomial coefficients
         // This performs the actual butterfly operations and produces the merged results
-        let merged_poly = MergeNTT::evaluate(merges, &self.rc_lookup_elements, &mut eval);
+        let merged_poly = Merge::new(root_times_f1, f0_plus_root_times_f1, f0_minus_root_times_f1)
+            .evaluate(&self.rc_lookup_elements, &mut eval);
 
         // Add merged polynomial coefficients to NTT lookup relation for verification
         // This ensures the output values are properly connected to the NTT computation
-        merged_poly.into_iter().for_each(|x| {
-            eval.add_to_relation(RelationEntry::new(
-                &self.ntt_lookup_elements,
-                -E::EF::from(is_filled.clone()),
-                &[x],
-            ));
-        });
+
+        eval.add_to_relation(RelationEntry::new(
+            &self.ntt_lookup_elements,
+            -E::EF::from(is_filled.clone()),
+            &[merged_poly[0].clone()],
+        ));
+        eval.add_to_relation(RelationEntry::new(
+            &self.ntt_lookup_elements,
+            -E::EF::from(is_filled.clone()),
+            &[merged_poly[1].clone()],
+        ));
 
         eval.finalize_logup();
         eval

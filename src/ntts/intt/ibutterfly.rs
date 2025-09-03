@@ -108,7 +108,7 @@ impl Claim {
         // - f0 + f1 * sqr1 / Q, f0 + f1 * sqr1 % Q: Addition decomposition
         // - f0 - f1 * sqr1 / Q, f0 - f1 * sqr1 % Q: Subtraction decomposition
         polys.iter().for_each(|poly| {
-            debug_assert_eq!(poly.len(), 2);
+            assert_eq!(poly.len(), 2);
             let f_ntt_0 = poly[0];
             let f_ntt_1 = poly[1];
             f_ntt_0_col.push(f_ntt_0);

@@ -44,10 +44,7 @@ use crate::{
     big_air::relation::{
         INTTInputLookupElements, INTTLookupElements, InvRootsLookupElements, RCLookupElements,
     },
-    ntts::{
-        I2, ROOTS,
-        intt::split::{Split, SplitNTT},
-    },
+    ntts::{I2, ROOTS, intt::split::Split},
     zq::{Q, add::AddMod, inverses::INVERSES_MOD_Q, mul::MulMod, sub::SubMod},
 };
 
@@ -263,7 +260,6 @@ impl FrameworkEval for Eval {
         // Extract the filled mask that indicates which positions contain valid data
         let is_filled = eval.next_trace_mask();
         // Initialize collection of split operations for this INTT level
-        let mut split = SplitNTT::default();
 
         // Process each pair of coefficients (even, odd) for the split operation
 
@@ -338,35 +334,31 @@ impl FrameworkEval for Eval {
             eval.next_trace_mask(),
         );
 
-        // Create a split operation combining all five arithmetic steps
-        // This represents one complete split operation for this coefficient pair
-        split.push(Split::new(
+        // Evaluate all split operations and collect the two smaller polynomials
+        // This performs the actual split operations and produces f0 and f1 polynomials
+        let [f0, f1] = Split::new(
             f_even_plus_f_odd,
             i2_times_f_even_plus_f_odd,
             f_even_minus_f_odd,
             i2_times_f_even_minus_f_odd,
             i2_times_f_even_minus_f_odd_times_root_inv,
-        ));
-
-        // Evaluate all split operations and collect the two smaller polynomials
-        // This performs the actual split operations and produces f0 and f1 polynomials
-        let (f0, f1) = split.evaluate(&self.rc_lookup_elements, &mut eval);
+        )
+        .evaluate(&self.rc_lookup_elements, &mut eval);
 
         // Add split polynomial coefficients to INTT lookup relation for verification
         // This ensures the output values are properly connected to the INTT computation
-        f0.iter().zip(f1.iter()).for_each(|(f_even, f_odd)| {
-            eval.add_to_relation(RelationEntry::new(
-                &self.intt_lookup_elements,
-                -E::EF::from(is_filled.clone()),
-                &[f_even.clone()],
-            ));
 
-            eval.add_to_relation(RelationEntry::new(
-                &self.intt_lookup_elements,
-                -E::EF::from(is_filled.clone()),
-                &[f_odd.clone()],
-            ));
-        });
+        eval.add_to_relation(RelationEntry::new(
+            &self.intt_lookup_elements,
+            -E::EF::from(is_filled.clone()),
+            &[f0],
+        ));
+
+        eval.add_to_relation(RelationEntry::new(
+            &self.intt_lookup_elements,
+            -E::EF::from(is_filled.clone()),
+            &[f1],
+        ));
 
         eval.finalize_logup();
         eval
