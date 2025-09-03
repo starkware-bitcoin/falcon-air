@@ -39,7 +39,9 @@ use stwo_constraint_framework::{
 
 use crate::{
     POLY_SIZE,
-    big_air::relation::{IButterflyLookupElements, INTTLookupElements, RCLookupElements},
+    big_air::relation::{
+        IButterflyLookupElements, INTTLookupElements, LookupElements, RCLookupElements,
+    },
     ntts::{I2, SQ1},
     zq::{Q, add::AddMod, inverses::INVERSES_MOD_Q, mul::MulMod, sub::SubMod},
 };
@@ -382,9 +384,7 @@ impl InteractionClaim {
     /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        rc_lookup_elements: &RCLookupElements,
-        intt_lookup_elements: &INTTLookupElements,
-        ibutterfly_output_lookup_elements: &IButterflyLookupElements,
+        lookup_elements: &LookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
@@ -403,7 +403,7 @@ impl InteractionClaim {
                 let result_packed = trace[col].data[vec_row];
 
                 // Create the denominator using the lookup elements for range checking
-                let denom: PackedQM31 = intt_lookup_elements.combine(&[result_packed]);
+                let denom: PackedQM31 = lookup_elements.intt.combine(&[result_packed]);
                 col_gen.write_frac(vec_row, PackedQM31::one(), denom);
             }
             col_gen.finalize_col();
@@ -416,7 +416,7 @@ impl InteractionClaim {
                 let result_packed = trace[col].data[vec_row];
 
                 // Create the denominator using the lookup elements for range checking
-                let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
+                let denom: PackedQM31 = lookup_elements.rc.combine(&[result_packed]);
                 col_gen.write_frac(vec_row, PackedQM31::one(), denom);
             }
             col_gen.finalize_col();
@@ -429,7 +429,7 @@ impl InteractionClaim {
                 let result_packed = trace[col].data[vec_row];
 
                 // Create the denominator using the lookup elements for range checking
-                let denom: PackedQM31 = ibutterfly_output_lookup_elements.combine(&[result_packed]);
+                let denom: PackedQM31 = lookup_elements.ibutterfly.combine(&[result_packed]);
                 col_gen.write_frac(vec_row, -PackedQM31::one(), denom);
             }
             col_gen.finalize_col();

@@ -64,7 +64,7 @@ use stwo_constraint_framework::{
 };
 
 use crate::{
-    big_air::relation::{MulLookupElements, NTTLookupElements, RCLookupElements},
+    big_air::relation::{LookupElements, MulLookupElements, NTTLookupElements, RCLookupElements},
     zq::{Q, mul::MulMod},
 };
 
@@ -298,10 +298,7 @@ impl InteractionClaim {
     /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        rc_lookup_elements: &RCLookupElements,
-        f_ntt_lookup_elements: &NTTLookupElements,
-        g_ntt_lookup_elements: &NTTLookupElements,
-        mul_lookup_elements: &MulLookupElements,
+        lookup_elements: &LookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
@@ -315,7 +312,7 @@ impl InteractionClaim {
             let result_packed = trace[3].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.rc.combine(&[result_packed]);
 
             // The numerator is 1 (we want to check that remainder is in the range)
             let numerator = PackedQM31::one();
@@ -331,7 +328,7 @@ impl InteractionClaim {
             let result_packed = trace[0].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = f_ntt_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.f_ntt.combine(&[result_packed]);
 
             // The numerator is 1 (we're consuming the value created by the NTT)
             let numerator = PackedQM31::one();
@@ -347,7 +344,7 @@ impl InteractionClaim {
             let result_packed = trace[1].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = g_ntt_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.g_ntt.combine(&[result_packed]);
 
             // The numerator is 1 (we're consuming the value created by the NTT)
 
@@ -364,7 +361,7 @@ impl InteractionClaim {
             let result_packed = trace[3].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = mul_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.mul.combine(&[result_packed]);
 
             // The numerator is -1 (we're producing a value)
             let numerator = -PackedQM31::one();

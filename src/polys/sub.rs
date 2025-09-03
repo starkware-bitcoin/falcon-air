@@ -64,7 +64,9 @@ use stwo_constraint_framework::{
 };
 
 use crate::{
-    big_air::relation::{IButterflyLookupElements, RCLookupElements, SubLookupElements},
+    big_air::relation::{
+        IButterflyLookupElements, LookupElements, RCLookupElements, SubLookupElements,
+    },
     zq::{Q, sub::SubMod},
 };
 
@@ -224,9 +226,7 @@ impl InteractionClaim {
     /// with the range check component through the lookup protocol.
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        rc_lookup_elements: &RCLookupElements,
-        ibutterfly_lookup_elements: &IButterflyLookupElements,
-        sub_lookup_elements: &SubLookupElements,
+        lookup_elements: &LookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
@@ -241,7 +241,7 @@ impl InteractionClaim {
             let result_packed = trace[3].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = rc_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.rc.combine(&[result_packed]);
 
             // The numerator is 1 (we want to check that remainder is in the range)
             let numerator = PackedQM31::one();
@@ -257,7 +257,7 @@ impl InteractionClaim {
             let result_packed = trace[3].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = sub_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.sub.combine(&[result_packed]);
 
             // The numerator is -1 (we're producing a value)
             let numerator = -PackedQM31::one();
@@ -272,7 +272,7 @@ impl InteractionClaim {
             let result_packed = trace[1].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = ibutterfly_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.ibutterfly.combine(&[result_packed]);
 
             // The numerator is 1 (we're consuming a value)
             let numerator = PackedQM31::one();

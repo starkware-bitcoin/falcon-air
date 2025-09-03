@@ -64,7 +64,7 @@ use stwo_constraint_framework::{
 
 use crate::{
     POLY_SIZE,
-    big_air::relation::{RCLookupElements, SubLookupElements},
+    big_air::relation::{LookupElements, RCLookupElements, SubLookupElements},
     zq::Q,
 };
 
@@ -123,6 +123,7 @@ impl Claim {
     /// - `ColumnVec<CircleEvaluation<...>>`: The computation trace columns
     /// - `Vec<M31>`: Remainder values for range checking
     /// - `(u32, u32)`: Final Euclidean norm values for both polynomials
+    #[allow(clippy::type_complexity)]
     pub fn gen_trace(
         &self,
         s0: &[u32; POLY_SIZE],
@@ -355,10 +356,7 @@ impl InteractionClaim {
     /// Returns the interaction trace and the interaction claim.
     pub fn gen_interaction_trace(
         trace: &[CircleEvaluation<SimdBackend, M31, BitReversedOrder>],
-        half_rc_lookup_elements: &RCLookupElements,
-        s0_lookup_elements: &SubLookupElements,
-        low_sig_bound_check_lookup_elements: &RCLookupElements,
-        high_sig_bound_check_lookup_elements: &RCLookupElements,
+        lookup_elements: &LookupElements,
     ) -> (
         ColumnVec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         InteractionClaim,
@@ -374,7 +372,7 @@ impl InteractionClaim {
             let result_packed = trace[2].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = half_rc_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.half_range_check.combine(&[result_packed]);
 
             // The numerator is 1 (we want to check that remainder is in the range)
             let numerator = PackedQM31::one();
@@ -389,7 +387,7 @@ impl InteractionClaim {
             let result_packed = trace[5].data[vec_row];
 
             // Create the denominator using the lookup elements
-            let denom: PackedQM31 = half_rc_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.half_range_check.combine(&[result_packed]);
 
             // The numerator is 1 (we want to check that remainder is in the range)
             let numerator = PackedQM31::one();
@@ -401,7 +399,7 @@ impl InteractionClaim {
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             let result_packed = trace[0].data[vec_row];
-            let denom: PackedQM31 = s0_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements.sub.combine(&[result_packed]);
             let numerator = PackedQM31::one();
             col_gen.write_frac(vec_row, numerator, denom);
         }
@@ -409,7 +407,9 @@ impl InteractionClaim {
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             let result_packed = trace[9].data[vec_row];
-            let denom: PackedQM31 = low_sig_bound_check_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements
+                .low_sig_bound_check
+                .combine(&[result_packed]);
             let numerator = PackedQM31::from(is_last.data[vec_row]);
             col_gen.write_frac(vec_row, numerator, denom);
         }
@@ -417,7 +417,9 @@ impl InteractionClaim {
         let mut col_gen = logup_gen.new_col();
         for vec_row in 0..(1 << (log_size - LOG_N_LANES)) {
             let result_packed = trace[10].data[vec_row];
-            let denom: PackedQM31 = high_sig_bound_check_lookup_elements.combine(&[result_packed]);
+            let denom: PackedQM31 = lookup_elements
+                .high_sig_bound_check
+                .combine(&[result_packed]);
             let numerator = PackedQM31::from(is_last.data[vec_row]);
             col_gen.write_frac(vec_row, numerator, denom);
         }

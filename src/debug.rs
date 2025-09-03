@@ -75,24 +75,8 @@ pub fn assert_constraints(
     let mut dummy_channel = Blake2sChannel::default();
     let lookup_elements = LookupElements::draw(&mut dummy_channel);
     let mut tree_builder = commitment_scheme.tree_builder();
-    let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
-        &lookup_elements,
-        &traces.f_ntt_butterfly,
-        &traces.f_ntt_merges,
-        &traces.g_ntt_butterfly,
-        &traces.g_ntt_merges,
-        &traces.mul,
-        &traces.intt_merges,
-        &traces.ibutterfly,
-        &traces.sub,
-        &traces.euclidean_norm,
-        &traces.half_range_check,
-        &traces.low_sig_bound_check,
-        &traces.high_sig_bound_check,
-        &traces.range_check,
-        &traces.roots,
-        &traces.inv_roots,
-    );
+    let (interaction_trace, interaction_claim) =
+        BigInteractionClaim::gen_interaction_trace(&lookup_elements, &traces);
     tree_builder.extend_evals(interaction_trace);
     tree_builder.finalize_interaction();
 

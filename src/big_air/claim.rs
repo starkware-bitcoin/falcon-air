@@ -99,6 +99,7 @@ pub struct AllTraces {
 
 impl AllTraces {
     /// Creates a new AllTraces instance with the provided traces.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         f_ntt_butterfly: Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>,
         f_ntt_merges: Vec<Vec<CircleEvaluation<SimdBackend, M31, BitReversedOrder>>>,
@@ -342,7 +343,7 @@ impl BigClaim {
         );
         let half_range_check_trace = self
             .half_range_check
-            .gen_trace(&chain!([euclidean_norm_remainders]).collect_vec());
+            .gen_trace(&[euclidean_norm_remainders]);
 
         let low_sig_bound_check_trace = self
             .low_sig_bound_check
@@ -578,6 +579,7 @@ impl BigClaim {
     /// # Returns
     ///
     /// Returns all the remaining components as individual variables.
+    #[allow(clippy::type_complexity)]
     pub fn create_remaining_components(
         claim: &BigClaim,
         lookup_elements: &crate::big_air::relation::LookupElements,

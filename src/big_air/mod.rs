@@ -105,24 +105,8 @@ pub fn prove_falcon(
     let lookup_elements = LookupElements::draw(channel);
 
     // Generate and commit to interaction traces
-    let (interaction_trace, interaction_claim) = BigInteractionClaim::gen_interaction_trace(
-        &lookup_elements,
-        &traces.f_ntt_butterfly,
-        &traces.f_ntt_merges,
-        &traces.g_ntt_butterfly,
-        &traces.g_ntt_merges,
-        &traces.mul,
-        &traces.intt_merges,
-        &traces.ibutterfly,
-        &traces.sub,
-        &traces.euclidean_norm,
-        &traces.half_range_check,
-        &traces.low_sig_bound_check,
-        &traces.high_sig_bound_check,
-        &traces.range_check,
-        &traces.roots,
-        &traces.inv_roots,
-    );
+    let (interaction_trace, interaction_claim) =
+        BigInteractionClaim::gen_interaction_trace(&lookup_elements, &traces);
 
     interaction_claim.mix_into(channel);
 
