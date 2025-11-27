@@ -10,6 +10,7 @@ path = "bin/falcon-air.rs"
 [workspace]
 members = [
     "crates/falcon",
+    "crates/shake256",
 ]
 
 [dependencies]

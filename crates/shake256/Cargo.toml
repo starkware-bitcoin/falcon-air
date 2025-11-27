@@ -1,0 +1,31 @@
+[package]
+name = "shake-256"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+relation-tracker = []
+
+[dependencies]
+stwo-prover = { git = "https://github.com/starkware-libs/stwo", features = [
+  "parallel",
+], rev = "ab57a1c" }
+stwo-air-utils-derive = { git = "https://github.com/starkware-libs/stwo", rev = "ab57a1c" }
+stwo-air-utils = { git = "https://github.com/starkware-libs/stwo", rev = "ab57a1c" }
+stwo-constraint-framework = { git = "https://github.com/starkware-libs/stwo", features = [
+  "parallel",
+], rev = "ab57a1c" }
+serde = "1.0.228"
+tracing = "0.1.41"
+num-traits = "0.2.19"
+rayon = "1.11.0"
+itertools = "0.14.0"
+tiny-keccak = { version = "2.0.2", features = ["keccak", "shake"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2.0.17"
+
+[dev-dependencies]
+
+[[bench]]
+name = "prover_bench"
+harness = false
