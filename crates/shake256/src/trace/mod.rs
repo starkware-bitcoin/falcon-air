@@ -1,10 +1,9 @@
-pub mod chi_8_8_8;
+pub mod chi_8_8;
 pub mod keccak;
 pub mod keccak_round;
 pub mod rc_7_7_7;
 pub mod shake256;
 pub mod xor_8_8;
-pub mod xor_8_8_8;
 
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
@@ -31,8 +30,7 @@ pub struct Claim {
     pub shake256: shake256::Claim,
     pub keccak: keccak::Claim,
     pub keccak_round: keccak_round::Claim,
-    pub xor_8_8_8: xor_8_8_8::Claim,
-    pub chi_8_8_8: chi_8_8_8::Claim,
+    pub chi_8_8: chi_8_8::Claim,
     pub xor_8_8: xor_8_8::Claim,
     pub rc_7_7_7: rc_7_7_7::Claim,
 }
@@ -43,8 +41,7 @@ impl Claim {
             self.shake256.log_sizes(),
             self.keccak.log_sizes(),
             self.keccak_round.log_sizes(),
-            self.xor_8_8_8.log_sizes(),
-            self.chi_8_8_8.log_sizes(),
+            self.chi_8_8.log_sizes(),
             self.xor_8_8.log_sizes(),
             self.rc_7_7_7.log_sizes(),
         ];
@@ -55,8 +52,7 @@ impl Claim {
         self.shake256.mix_into(channel);
         self.keccak.mix_into(channel);
         self.keccak_round.mix_into(channel);
-        self.xor_8_8_8.mix_into(channel);
-        self.chi_8_8_8.mix_into(channel);
+        self.chi_8_8.mix_into(channel);
         self.xor_8_8.mix_into(channel);
         self.rc_7_7_7.mix_into(channel);
     }
@@ -115,14 +111,9 @@ impl Claim {
             keccak_round::Claim::generate_trace(keccak_round_input, N_ROUNDS * keccak_invocations);
 
         // Generate traces for providers
-        let requested_xor_8_8_8 = keccak_round_interaction_claim_data
+        let requested_chi_8_8 = keccak_round_interaction_claim_data
             .lookup_data
-            .xor_8_8_8
-            .par_iter()
-            .map(|v| v.as_slice());
-        let requested_chi_8_8_8 = keccak_round_interaction_claim_data
-            .lookup_data
-            .chi_8_8_8
+            .chi_8_8
             .par_iter()
             .map(|v| v.as_slice());
         let requested_xor_8_8 = keccak_round_interaction_claim_data
@@ -135,10 +126,8 @@ impl Claim {
             .rc_7_7_7
             .par_iter()
             .map(|v| v.as_slice());
-        let (xor_8_8_8_claim, xor_8_8_8_trace, xor_8_8_8_interaction_claim_data) =
-            xor_8_8_8::Claim::generate_trace(requested_xor_8_8_8);
-        let (chi_8_8_8_claim, chi_8_8_8_trace, chi_8_8_8_interaction_claim_data) =
-            chi_8_8_8::Claim::generate_trace(requested_chi_8_8_8);
+        let (chi_8_8_claim, chi_8_8_trace, chi_8_8_interaction_claim_data) =
+            chi_8_8::Claim::generate_trace(requested_chi_8_8);
         let (xor_8_8_claim, xor_8_8_trace, xor_8_8_interaction_claim_data) =
             xor_8_8::Claim::generate_trace(requested_xor_8_8);
         let (rc_7_7_7_claim, rc_7_7_7_trace, rc_7_7_7_interaction_claim_data) =
@@ -149,8 +138,7 @@ impl Claim {
             shake256: shake256_interaction_claim_data,
             keccak: keccak_interaction_claim_data,
             keccak_round: keccak_round_interaction_claim_data,
-            xor_8_8_8: xor_8_8_8_interaction_claim_data,
-            chi_8_8_8: chi_8_8_8_interaction_claim_data,
+            chi_8_8: chi_8_8_interaction_claim_data,
             xor_8_8: xor_8_8_interaction_claim_data,
             rc_7_7_7: rc_7_7_7_interaction_claim_data,
         };
@@ -161,8 +149,7 @@ impl Claim {
             .into_iter()
             .chain(keccak_trace.to_evals())
             .chain(keccak_round_trace.to_evals())
-            .chain(xor_8_8_8_trace)
-            .chain(chi_8_8_8_trace)
+            .chain(chi_8_8_trace)
             .chain(xor_8_8_trace)
             .chain(rc_7_7_7_trace);
 
@@ -171,8 +158,7 @@ impl Claim {
                 shake256: shake256_claim,
                 keccak: keccak_claim,
                 keccak_round: keccak_round_claim,
-                xor_8_8_8: xor_8_8_8_claim,
-                chi_8_8_8: chi_8_8_8_claim,
+                chi_8_8: chi_8_8_claim,
                 xor_8_8: xor_8_8_claim,
                 rc_7_7_7: rc_7_7_7_claim,
             },

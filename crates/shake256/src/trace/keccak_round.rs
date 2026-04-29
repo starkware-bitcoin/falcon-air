@@ -23,31 +23,57 @@ use stwo_prover::core::{
 };
 
 const N_KECCAK_ROUND_LOOKUPS: usize = 2;
-pub const N_XOR_8_8_LOOKUPS1: usize =
-    SQRT_N_LANES_SHAKE256 * N_BYTES_IN_U64 + N_LANES_SHAKE256 * N_BYTES_IN_U64;
-pub const N_XOR_8_8_LOOKUPS2: usize = N_BYTES_IN_U64;
-const N_XOR_8_8_LOOKUPS: usize = N_XOR_8_8_LOOKUPS1 + N_XOR_8_8_LOOKUPS2;
-pub const N_XOR_8_8_8_LOOKUPS: usize = SQRT_N_LANES_SHAKE256 * 2 * N_BYTES_IN_U64;
-pub const N_CHI_8_8_8_LOOKUPS: usize = N_LANES_SHAKE256 * N_BYTES_IN_U64;
-pub const N_RC_7_7_7_LOOKUPS_1: usize = SQRT_N_LANES_SHAKE256 * 3;
-pub const N_RC_7_7_7_LOOKUPS_2: usize = (N_LANES_SHAKE256 - 3) * 3; // 3 rotations are trivial
-const N_RC_7_7_7_LOOKUPS: usize = N_RC_7_7_7_LOOKUPS_1 + N_RC_7_7_7_LOOKUPS_2;
+
+// XOR_8_8 lookup budget per row, after replacing the 24-bit xor_8_8_8 / chi_8_8_8 tables with
+// chained 16-bit lookups:
+//   - 4 chained xors per theta C/C_inter computation (for each of the 5 x's, 8 bytes)
+//   - 1 xor per D[x] = C[x-1] ^ rotl(C[x+1], 1) (for each of the 5 x's, 8 bytes)
+//   - 1 xor per theta-on-S update (for each of the 25 lanes, 8 bytes)
+//   - 1 xor per chi tail (for each of the 25 lanes, 8 bytes)
+//   - 1 xor per iota (for the byte limbs)
+pub const N_XOR_8_8_LOOKUPS_THETA_CHAIN: usize =
+    4 * SQRT_N_LANES_SHAKE256 * N_BYTES_IN_U64; // 160
+pub const N_XOR_8_8_LOOKUPS_D: usize = SQRT_N_LANES_SHAKE256 * N_BYTES_IN_U64; // 40
+pub const N_XOR_8_8_LOOKUPS_THETA_ON_S: usize = N_LANES_SHAKE256 * N_BYTES_IN_U64; // 200
+pub const N_XOR_8_8_LOOKUPS_CHI_TAIL: usize = N_LANES_SHAKE256 * N_BYTES_IN_U64; // 200
+pub const N_XOR_8_8_LOOKUPS_IOTA: usize = N_BYTES_IN_U64; // 8
+pub const N_XOR_8_8_LOOKUPS: usize = N_XOR_8_8_LOOKUPS_THETA_CHAIN
+    + N_XOR_8_8_LOOKUPS_D
+    + N_XOR_8_8_LOOKUPS_THETA_ON_S
+    + N_XOR_8_8_LOOKUPS_CHI_TAIL
+    + N_XOR_8_8_LOOKUPS_IOTA; // 608
+
+// CHI_8_8 lookup budget: one (!b)&c lookup per chi tail byte.
+pub const N_CHI_8_8_LOOKUPS: usize = N_LANES_SHAKE256 * N_BYTES_IN_U64; // 200
+
+// rc_7_7_7 budget unchanged (rotation aux range checks).
+pub const N_RC_7_7_7_LOOKUPS_1: usize = SQRT_N_LANES_SHAKE256 * 3; // 15
+pub const N_RC_7_7_7_LOOKUPS_2: usize = (N_LANES_SHAKE256 - 3) * 3; // 66
+pub const N_RC_7_7_7_LOOKUPS: usize = N_RC_7_7_7_LOOKUPS_1 + N_RC_7_7_7_LOOKUPS_2; // 81
+
+// Witness columns for theta chaining: per x, 2 intermediate u64 limbs (t1 between
+// (S0,S1) and (S0^S1,S2), t2 between (C_inter, S3) and (C_inter^S3, S4)).
+const N_THETA_CHAIN_WITNESS_LIMBS: usize = SQRT_N_LANES_SHAKE256 * 2 * N_BYTES_IN_U64; // 80
+// Witness columns for chi chaining: per (x,y), 1 intermediate (!b)&c byte.
+const N_CHI_CHAIN_WITNESS_LIMBS: usize = N_LANES_SHAKE256 * N_BYTES_IN_U64; // 200
 
 const N_COLUMNS: usize = 1
-    + 2 * N_BYTES_IN_U64
-    + N_BYTES_IN_STATE
+    + 2 * N_BYTES_IN_U64 // current_rc + next_rc
+    + N_BYTES_IN_STATE // initial state
     + (2 * SQRT_N_LANES_SHAKE256 * N_BYTES_IN_U64 // C_inter and C
+            + N_THETA_CHAIN_WITNESS_LIMBS // t1, t2 intermediates per x
             + SQRT_N_LANES_SHAKE256 * N_BYTES_IN_U64 // C_rot_1
             + SQRT_N_LANES_SHAKE256 * N_BYTES_IN_U64 // D
             + N_LANES_SHAKE256 * N_BYTES_IN_U64 // THETA on S
             + (N_LANES_SHAKE256 - 3) * N_BYTES_IN_U64 // B, 3 rotations don't require hints
+            + N_CHI_CHAIN_WITNESS_LIMBS // chi_partial = (!b)&c intermediates
             + N_LANES_SHAKE256 * N_BYTES_IN_U64 // CHI on S
             + N_BYTES_IN_U64); // IOTA on S
+
 const N_INTERACTION_COLUMNS: usize = SECURE_EXTENSION_DEGREE
     * (N_KECCAK_ROUND_LOOKUPS
         + N_XOR_8_8_LOOKUPS
-        + N_XOR_8_8_8_LOOKUPS
-        + N_CHI_8_8_8_LOOKUPS
+        + N_CHI_8_8_LOOKUPS
         + N_RC_7_7_7_LOOKUPS)
         .div_ceil(2);
 
@@ -64,8 +90,7 @@ const RHO_OFFSETS: [[usize; 5]; 5] = [
 pub struct Indexes {
     pub col_index: usize,
     pub xor_8_8_index: usize,
-    pub xor_8_8_8_index: usize,
-    pub chi_8_8_8_index: usize,
+    pub chi_8_8_index: usize,
     pub rc_7_7_7_index: usize,
 }
 
@@ -78,8 +103,7 @@ pub struct InteractionClaimData {
 pub struct LookupData {
     pub keccak_round: [Vec<[PackedM31; N_BYTES_IN_STATE + N_BYTES_IN_U64]>; N_KECCAK_ROUND_LOOKUPS],
     pub xor_8_8: [Vec<[PackedM31; 3]>; N_XOR_8_8_LOOKUPS],
-    pub xor_8_8_8: [Vec<[PackedM31; 4]>; N_XOR_8_8_8_LOOKUPS],
-    pub chi_8_8_8: [Vec<[PackedM31; 4]>; N_CHI_8_8_8_LOOKUPS],
+    pub chi_8_8: [Vec<[PackedM31; 3]>; N_CHI_8_8_LOOKUPS],
     pub rc_7_7_7: [Vec<[PackedM31; 3]>; N_RC_7_7_7_LOOKUPS],
 }
 
@@ -193,49 +217,56 @@ impl Claim {
                 // ╔════════════════════════════════════╗
                 // ║               Theta                ║
                 // ╚════════════════════════════════════╝
-                // Initialize C and C_inter with zeros
+                // C[x] = S[x,0] ^ S[x,1] ^ S[x,2] ^ S[x,3] ^ S[x,4] computed via 4 chained xor_8_8.
                 let mut C: [Fu64_8<PackedM31>; SQRT_N_LANES_SHAKE256] =
                     std::array::from_fn(|_| Fu64_8::zero());
                 let mut C_inter: [Fu64_8<PackedM31>; SQRT_N_LANES_SHAKE256] =
                     std::array::from_fn(|_| Fu64_8::zero());
 
-                // C computation
                 for x in 0..SQRT_N_LANES_SHAKE256 {
-                    // Hint C_inter
+                    // t1 = S[x,0] ^ S[x,1] (intermediate, witnessed for the chained lookup)
+                    let t1: Fu64_8<PackedM31> = Fu64_8::from_felts(&std::array::from_fn(|i| {
+                        let v = xor_8_8(S[x].limbs[i], S[x + 5].limbs[i]);
+                        *row[indexes.col_index] = v;
+                        indexes.col_index += 1;
+                        v
+                    }));
+                    // C_inter[x] = t1 ^ S[x,2]
                     C_inter[x] = Fu64_8::from_felts(&std::array::from_fn(|i| {
-                        let c_inter =
-                            xor_8_8_8(S[x].limbs[i], S[x + 5].limbs[i], S[x + 10].limbs[i]);
-                        *row[indexes.col_index] = c_inter;
+                        let v = xor_8_8(t1.limbs[i], S[x + 10].limbs[i]);
+                        *row[indexes.col_index] = v;
                         indexes.col_index += 1;
-                        c_inter
+                        v
                     }));
-
-                    // Hint C
+                    // t2 = C_inter[x] ^ S[x,3]
+                    let t2: Fu64_8<PackedM31> = Fu64_8::from_felts(&std::array::from_fn(|i| {
+                        let v = xor_8_8(C_inter[x].limbs[i], S[x + 15].limbs[i]);
+                        *row[indexes.col_index] = v;
+                        indexes.col_index += 1;
+                        v
+                    }));
+                    // C[x] = t2 ^ S[x,4]
                     C[x] = Fu64_8::from_felts(&std::array::from_fn(|i| {
-                        let c =
-                            xor_8_8_8(C_inter[x].limbs[i], S[x + 15].limbs[i], S[x + 20].limbs[i]);
-                        *row[indexes.col_index] = c;
+                        let v = xor_8_8(t2.limbs[i], S[x + 20].limbs[i]);
+                        *row[indexes.col_index] = v;
                         indexes.col_index += 1;
-                        c
+                        v
                     }));
 
-                    // Lookup data for Xor_8_8_8
+                    // Lookup data for the four chained xor_8_8 calls per x.
                     for i in 0..N_BYTES_IN_U64 {
-                        *lookup_data.xor_8_8_8[indexes.xor_8_8_8_index] = [
-                            S[x].limbs[i],
-                            S[x + 5].limbs[i],
-                            S[x + 10].limbs[i],
-                            C_inter[x].limbs[i],
-                        ];
-                        indexes.xor_8_8_8_index += 1;
-
-                        *lookup_data.xor_8_8_8[indexes.xor_8_8_8_index] = [
-                            C_inter[x].limbs[i],
-                            S[x + 15].limbs[i],
-                            S[x + 20].limbs[i],
-                            C[x].limbs[i],
-                        ];
-                        indexes.xor_8_8_8_index += 1;
+                        *lookup_data.xor_8_8[indexes.xor_8_8_index] =
+                            [S[x].limbs[i], S[x + 5].limbs[i], t1.limbs[i]];
+                        indexes.xor_8_8_index += 1;
+                        *lookup_data.xor_8_8[indexes.xor_8_8_index] =
+                            [t1.limbs[i], S[x + 10].limbs[i], C_inter[x].limbs[i]];
+                        indexes.xor_8_8_index += 1;
+                        *lookup_data.xor_8_8[indexes.xor_8_8_index] =
+                            [C_inter[x].limbs[i], S[x + 15].limbs[i], t2.limbs[i]];
+                        indexes.xor_8_8_index += 1;
+                        *lookup_data.xor_8_8[indexes.xor_8_8_index] =
+                            [t2.limbs[i], S[x + 20].limbs[i], C[x].limbs[i]];
+                        indexes.xor_8_8_index += 1;
                     }
                 }
 
@@ -325,28 +356,47 @@ impl Claim {
                 // ╔════════════════════════════════════╗
                 // ║                 CHI                ║
                 // ╚════════════════════════════════════╝
+                // chi(a, b, c) = a ^ ((!b) & c). We split into:
+                //   chi_partial = (!b) & c   via chi_8_8 lookup (16-bit table)
+                //   S          = a ^ chi_partial via xor_8_8 lookup
+                // chi_partial limbs are written first, then the chi result limbs.
 
-                // Update S
+                // Stage 1: write chi_partial witnesses for all (x, y) pairs.
+                let mut chi_partials: [Fu64_8<PackedM31>; N_LANES_SHAKE256] =
+                    std::array::from_fn(|_| Fu64_8::zero());
                 for y in 0..SQRT_N_LANES_SHAKE256 {
                     for x in 0..SQRT_N_LANES_SHAKE256 {
-                        S[x + 5 * y] = Fu64_8::from_felts(&std::array::from_fn(|i| {
-                            let a = B[5 * x + y].limbs[i];
-                            let b = B[5 * ((x + 1) % SQRT_N_LANES_SHAKE256) + y].limbs[i];
-                            let c = B[5 * ((x + 2) % SQRT_N_LANES_SHAKE256) + y].limbs[i];
-                            let v = chi_8_8_8(a, b, c);
-
-                            *lookup_data.chi_8_8_8[indexes.chi_8_8_8_index] = [a, b, c, v];
-                            indexes.chi_8_8_8_index += 1;
-
-                            v
-                        }));
+                        let b = &B[5 * ((x + 1) % SQRT_N_LANES_SHAKE256) + y];
+                        let c = &B[5 * ((x + 2) % SQRT_N_LANES_SHAKE256) + y];
+                        chi_partials[x + 5 * y] =
+                            Fu64_8::from_felts(&std::array::from_fn(|i| {
+                                let v = chi_8_8(b.limbs[i], c.limbs[i]);
+                                *row[indexes.col_index] = v;
+                                indexes.col_index += 1;
+                                // chi_8_8 lookup: (b, c, (!b)&c)
+                                *lookup_data.chi_8_8[indexes.chi_8_8_index] =
+                                    [b.limbs[i], c.limbs[i], v];
+                                indexes.chi_8_8_index += 1;
+                                v
+                            }));
                     }
                 }
 
-                for x in 0..N_LANES_SHAKE256 {
-                    for i in 0..N_BYTES_IN_U64 {
-                        *row[indexes.col_index] = S[x].limbs[i];
-                        indexes.col_index += 1;
+                // Stage 2: compute and write S (chi result) limbs, plus the xor_8_8 chi-tail lookups.
+                for y in 0..SQRT_N_LANES_SHAKE256 {
+                    for x in 0..SQRT_N_LANES_SHAKE256 {
+                        let a = &B[5 * x + y];
+                        let p = &chi_partials[x + 5 * y];
+                        S[x + 5 * y] = Fu64_8::from_felts(&std::array::from_fn(|i| {
+                            let v = xor_8_8(a.limbs[i], p.limbs[i]);
+                            *row[indexes.col_index] = v;
+                            indexes.col_index += 1;
+                            // xor_8_8 lookup: (a, chi_partial, S)
+                            *lookup_data.xor_8_8[indexes.xor_8_8_index] =
+                                [a.limbs[i], p.limbs[i], v];
+                            indexes.xor_8_8_index += 1;
+                            v
+                        }));
                     }
                 }
 
@@ -407,21 +457,11 @@ fn xor_8_8(a: PackedM31, b: PackedM31) -> PackedM31 {
     )
 }
 
-fn xor_8_8_8(a: PackedM31, b: PackedM31, c: PackedM31) -> PackedM31 {
+fn chi_8_8(b: PackedM31, c: PackedM31) -> PackedM31 {
+    // Equivalent to (!b) & c on 8-bit lanes.
     PackedM31::from_array(
-        izip!(a.to_array(), b.to_array(), c.to_array())
-            .map(|(a, b, c)| M31::from(a.0 ^ b.0 ^ c.0))
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap(),
-    )
-}
-
-fn chi_8_8_8(a: PackedM31, b: PackedM31, c: PackedM31) -> PackedM31 {
-    // Equivalent to a ^ (!b & c) on 8-bit lanes
-    PackedM31::from_array(
-        izip!(a.to_array(), b.to_array(), c.to_array())
-            .map(|(a, b, c)| M31::from(a.0 ^ ((!b.0) & c.0)))
+        izip!(b.to_array(), c.to_array())
+            .map(|(b, c)| M31::from(((!b.0) & c.0) & 0xFF))
             .collect::<Vec<_>>()
             .try_into()
             .unwrap(),

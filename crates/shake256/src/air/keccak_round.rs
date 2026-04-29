@@ -40,15 +40,12 @@ impl FrameworkEval for Eval {
         // ╔════════════════════════════════════╗
         // ║           Initialization           ║
         // ╚════════════════════════════════════╝
-        // Guess the current and next round constants
         let current_rc_bytes: [E::F; N_BYTES_IN_U64] =
             std::array::from_fn(|_| eval.next_trace_mask());
         let next_rc_bytes: [E::F; N_BYTES_IN_U64] = std::array::from_fn(|_| eval.next_trace_mask());
 
-        // Initialize the round state
         let S: [E::F; N_BYTES_IN_STATE] = std::array::from_fn(|_| eval.next_trace_mask());
 
-        // Use the round state
         let round_data: Vec<E::F> = current_rc_bytes.iter().chain(S.iter()).cloned().collect();
         eval.add_to_relation(RelationEntry::new(
             &self.interaction_elements.keccak_round,
@@ -56,7 +53,6 @@ impl FrameworkEval for Eval {
             &round_data,
         ));
 
-        // Convert the state to an array of N_LANES_SHAKE256 u64
         let mut S: [Fu64_8<E::F>; N_LANES_SHAKE256] = S
             .chunks(8)
             .map(|chunk| Fu64_8::from_felts(chunk.try_into().unwrap()))
@@ -67,35 +63,63 @@ impl FrameworkEval for Eval {
         // ╔════════════════════════════════════╗
         // ║               Theta                ║
         // ╚════════════════════════════════════╝
-        // Initialize C with zeros
+        // C[x] = S[x,0] ^ S[x,1] ^ S[x,2] ^ S[x,3] ^ S[x,4] computed via 4 chained xor_8_8 lookups.
+        // For each x we witness the chain (t1, C_inter, t2, C) and emit one xor_8_8 lookup per link.
         let mut C: [Fu64_8<E::F>; SQRT_N_LANES_SHAKE256] = std::array::from_fn(|_| Fu64_8::zero());
+        let mut C_inter_arr: [Fu64_8<E::F>; SQRT_N_LANES_SHAKE256] =
+            std::array::from_fn(|_| Fu64_8::zero());
 
-        // Check C computation
         for x in 0..SQRT_N_LANES_SHAKE256 {
-            // Guess C_inter and C
+            // Witness intermediate t1 = S[x,0] ^ S[x,1]
+            let t1: Fu64_8<E::F> =
+                Fu64_8::from_felts(&std::array::from_fn(|_| eval.next_trace_mask()));
+            // Witness C_inter = t1 ^ S[x,2]
             let C_inter: Fu64_8<E::F> =
                 Fu64_8::from_felts(&std::array::from_fn(|_| eval.next_trace_mask()));
+            C_inter_arr[x] = C_inter.clone();
+            // Witness intermediate t2 = C_inter ^ S[x,3]
+            let t2: Fu64_8<E::F> =
+                Fu64_8::from_felts(&std::array::from_fn(|_| eval.next_trace_mask()));
+            // Witness C = t2 ^ S[x,4]
             C[x] = Fu64_8::from_felts(&std::array::from_fn(|_| eval.next_trace_mask()));
 
             for i in 0..N_BYTES_IN_U64 {
-                // Check that C_inter[x] = S[x,0]^S[x,1]^S[x,2]
+                // xor_8_8(S[x,0], S[x,1], t1)
                 eval.add_to_relation(RelationEntry::new(
-                    &self.interaction_elements.xor_8_8_8,
+                    &self.interaction_elements.xor_8_8,
                     E::EF::one(),
                     &[
                         S[x].limbs[i].clone(),
                         S[x + 5].limbs[i].clone(),
+                        t1.limbs[i].clone(),
+                    ],
+                ));
+                // xor_8_8(t1, S[x,2], C_inter)
+                eval.add_to_relation(RelationEntry::new(
+                    &self.interaction_elements.xor_8_8,
+                    E::EF::one(),
+                    &[
+                        t1.limbs[i].clone(),
                         S[x + 10].limbs[i].clone(),
                         C_inter.limbs[i].clone(),
                     ],
                 ));
-                // Check that C[x] = C_inter[x]^S[x,3]^S[x,4]
+                // xor_8_8(C_inter, S[x,3], t2)
                 eval.add_to_relation(RelationEntry::new(
-                    &self.interaction_elements.xor_8_8_8,
+                    &self.interaction_elements.xor_8_8,
                     E::EF::one(),
                     &[
                         C_inter.limbs[i].clone(),
                         S[x + 15].limbs[i].clone(),
+                        t2.limbs[i].clone(),
+                    ],
+                ));
+                // xor_8_8(t2, S[x,4], C)
+                eval.add_to_relation(RelationEntry::new(
+                    &self.interaction_elements.xor_8_8,
+                    E::EF::one(),
+                    &[
+                        t2.limbs[i].clone(),
                         S[x + 20].limbs[i].clone(),
                         C[x].limbs[i].clone(),
                     ],
@@ -109,15 +133,14 @@ impl FrameworkEval for Eval {
             rotr_fu64_8(&C[xp1], 63, &mut eval, &self.interaction_elements)
         });
 
-        // Guess D
+        // Witness D
         let D: [Fu64_8<E::F>; SQRT_N_LANES_SHAKE256] = std::array::from_fn(|_| {
             Fu64_8::from_felts(&std::array::from_fn(|_| eval.next_trace_mask()))
         });
 
-        // Check D computation
+        // Check D = C[x-1] ^ rotl(C[x+1], 1)
         for x in 0..SQRT_N_LANES_SHAKE256 {
             for i in 0..N_BYTES_IN_U64 {
-                // Spec: D[x] = C[x-1] ^ rotl(C[x+1], 1)
                 let xm1 = (x + SQRT_N_LANES_SHAKE256 - 1) % SQRT_N_LANES_SHAKE256;
                 eval.add_to_relation(RelationEntry::new(
                     &self.interaction_elements.xor_8_8,
@@ -131,15 +154,14 @@ impl FrameworkEval for Eval {
             }
         }
 
+        // Witness theta-on-S result and verify
         let res_S: [Fu64_8<E::F>; N_LANES_SHAKE256] = std::array::from_fn(|_| {
             Fu64_8::from_felts(&std::array::from_fn(|_| eval.next_trace_mask()))
         });
 
-        // Check S12 update
         for x in 0..SQRT_N_LANES_SHAKE256 {
             for y in 0..SQRT_N_LANES_SHAKE256 {
                 for i in 0..N_BYTES_IN_U64 {
-                    // Check that res_S[x] = S[x]^D[x]
                     eval.add_to_relation(RelationEntry::new(
                         &self.interaction_elements.xor_8_8,
                         E::EF::one(),
@@ -153,18 +175,16 @@ impl FrameworkEval for Eval {
             }
         }
 
-        // Update S12
         S = res_S;
 
         // ╔════════════════════════════════════╗
         // ║            RHO and PI              ║
         // ╚════════════════════════════════════╝
-        // Apply RHO rotations and PI permutation
         let mut B: [Fu64_8<E::F>; N_LANES_SHAKE256] = std::array::from_fn(|_| Fu64_8::zero());
         for x in 0..SQRT_N_LANES_SHAKE256 {
             for y in 0..SQRT_N_LANES_SHAKE256 {
                 let off = RHO_OFFSETS[x][y];
-                let rotr = if off == 0 { 0 } else { 64 - off }; // emulates left rotation
+                let rotr = if off == 0 { 0 } else { 64 - off };
                 B[5 * y + ((2 * x + 3 * y) % SQRT_N_LANES_SHAKE256)] =
                     rotr_fu64_8(&S[x + 5 * y], rotr, &mut eval, &self.interaction_elements);
             }
@@ -173,23 +193,42 @@ impl FrameworkEval for Eval {
         // ╔════════════════════════════════════╗
         // ║                 CHI                ║
         // ╚════════════════════════════════════╝
+        // chi(a, b, c) = a ^ ((!b) & c).
+        // Stage 1: witness chi_partial = (!b) & c via chi_8_8 lookups.
+        let chi_partials: [Fu64_8<E::F>; N_LANES_SHAKE256] = std::array::from_fn(|_| {
+            Fu64_8::from_felts(&std::array::from_fn(|_| eval.next_trace_mask()))
+        });
+        for y in 0..SQRT_N_LANES_SHAKE256 {
+            for x in 0..SQRT_N_LANES_SHAKE256 {
+                let b_idx = 5 * ((x + 1) % SQRT_N_LANES_SHAKE256) + y;
+                let c_idx = 5 * ((x + 2) % SQRT_N_LANES_SHAKE256) + y;
+                for i in 0..N_BYTES_IN_U64 {
+                    eval.add_to_relation(RelationEntry::new(
+                        &self.interaction_elements.chi_8_8,
+                        E::EF::one(),
+                        &[
+                            B[b_idx].limbs[i].clone(),
+                            B[c_idx].limbs[i].clone(),
+                            chi_partials[x + 5 * y].limbs[i].clone(),
+                        ],
+                    ));
+                }
+            }
+        }
 
-        // Guess S after CHI
+        // Stage 2: witness S after CHI and verify S = a ^ chi_partial.
         S = std::array::from_fn(|_| {
             Fu64_8::from_felts(&std::array::from_fn(|_| eval.next_trace_mask()))
         });
-
-        // Check CHI computation
         for y in 0..SQRT_N_LANES_SHAKE256 {
             for x in 0..SQRT_N_LANES_SHAKE256 {
                 for i in 0..N_BYTES_IN_U64 {
                     eval.add_to_relation(RelationEntry::new(
-                        &self.interaction_elements.chi_8_8_8,
+                        &self.interaction_elements.xor_8_8,
                         E::EF::one(),
                         &[
-                            B[x * 5 + y].limbs[i].clone(),
-                            B[((x + 1) % SQRT_N_LANES_SHAKE256) * 5 + y].limbs[i].clone(),
-                            B[((x + 2) % SQRT_N_LANES_SHAKE256) * 5 + y].limbs[i].clone(),
+                            B[5 * x + y].limbs[i].clone(),
+                            chi_partials[x + 5 * y].limbs[i].clone(),
                             S[x + 5 * y].limbs[i].clone(),
                         ],
                     ));
@@ -200,7 +239,6 @@ impl FrameworkEval for Eval {
         // ╔════════════════════════════════════╗
         // ║                IOTA                ║
         // ╚════════════════════════════════════╝
-        // Guess res_S_xor_RC and constrain with XOR lookups
         let res_S_xor_RC: Fu64_8<E::F> =
             Fu64_8::from_felts(&std::array::from_fn(|_| eval.next_trace_mask()));
         for i in 0..N_BYTES_IN_U64 {
@@ -245,7 +283,6 @@ fn rotr_fu64_8<E: EvalAtRow>(
     let max_ur: E::F = E::F::from(M31::from((1 << r) - 1));
     let two_pow_8_minus_r: E::F = E::F::from(M31::from(1 << (8 - r)));
 
-    // Byte rotation component of a right-rotation by n: new[i] = old[(i + q) % 8].
     let A: Fu64_8<E::F> = Fu64_8::from_felts(&std::array::from_fn(|i| {
         let idx = (i + (q % N_BYTES_IN_U64)) % N_BYTES_IN_U64;
         A.limbs[idx].clone()
@@ -255,12 +292,10 @@ fn rotr_fu64_8<E: EvalAtRow>(
         return A;
     }
 
-    // Guess r high bits and 8-r low bits of each 8-bit limb
     let A_hi_limbs: [E::F; 8] = std::array::from_fn(|_| eval.next_trace_mask());
     let A_lo_limbs: [E::F; 8] =
         std::array::from_fn(|i| A.limbs[i].clone() - A_hi_limbs[i].clone() * two_pow_r.clone());
 
-    // RC a_lo_limbs
     eval.add_to_relation(RelationEntry::new(
         &interaction_elements.rc_7_7_7,
         E::EF::one(),
@@ -289,7 +324,6 @@ fn rotr_fu64_8<E: EvalAtRow>(
         ],
     ));
 
-    // Rotate r times to the right
     Fu64_8::from_felts(&std::array::from_fn(|i| {
         let j = (i + 1) % N_BYTES_IN_U64;
         A_hi_limbs[i].clone() + A_lo_limbs[j].clone() * two_pow_8_minus_r.clone()

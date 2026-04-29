@@ -72,9 +72,8 @@ fn relation_entries(
         shake256,
         keccak,
         keccak_round,
-        xor_8_8_8,
         rc_7_7_7,
-        chi_8_8_8,
+        chi_8_8,
         xor_8_8,
     } = components;
 
@@ -82,9 +81,8 @@ fn relation_entries(
         add_to_relation_entries(&shake256, trace),
         add_to_relation_entries(&keccak, trace),
         add_to_relation_entries(&keccak_round, trace),
-        add_to_relation_entries(&xor_8_8_8, trace),
         add_to_relation_entries(&rc_7_7_7, trace),
-        add_to_relation_entries(&chi_8_8_8, trace),
+        add_to_relation_entries(&chi_8_8, trace),
         add_to_relation_entries(&xor_8_8, trace),
     )
     .collect();
